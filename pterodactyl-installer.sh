@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Skrip Installer Pterodactyl dengan Menu Pilihan
+# Skrip Installer Pterodactyl dengan Menu Pilihan, Akun Admin Default, dan Domain Utama serta Node
 
 # Periksa hak akses root
 if [ "$EUID" -ne 0 ]; then
@@ -58,11 +58,17 @@ install_panel() {
 # Fungsi untuk mengonfigurasi Nginx
 setup_nginx() {
     echo "5. Mengonfigurasi Nginx..."
-    echo "Masukkan domain Anda (tanpa http/https): "
-    read DOMAIN
+    
+    # Meminta input domain utama dan node
+    echo "Masukkan domain utama Anda (tanpa http/https): "
+    read MAIN_DOMAIN
+    echo "Masukkan domain node Anda (tanpa http/https): "
+    read NODE_DOMAIN
+
+    # Konfigurasi Nginx untuk domain utama
     echo "server {
         listen 80;
-        server_name $DOMAIN;
+        server_name $MAIN_DOMAIN;
 
         root /var/www/pterodactyl/public;
 
@@ -84,7 +90,36 @@ setup_nginx() {
         }
     }" > /etc/nginx/sites-available/pterodactyl
 
+    # Konfigurasi Nginx untuk domain node
+    echo "server {
+        listen 80;
+        server_name $NODE_DOMAIN;
+
+        root /var/www/pterodactyl/public;
+
+        index index.php;
+
+        location / {
+            try_files \$uri \$uri/ /index.php?\$query_string;
+        }
+
+        location ~ \.php\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+            include fastcgi_params;
+        }
+
+        location ~ /\.ht {
+            deny all;
+        }
+    }" > /etc/nginx/sites-available/node
+
+    # Membuat symbolic links agar Nginx menggunakan konfigurasi tersebut
     ln -s /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/
+    ln -s /etc/nginx/sites-available/node /etc/nginx/sites-enabled/
+    
+    # Menguji konfigurasi dan merestart Nginx
     nginx -t && systemctl restart nginx
     ufw allow 'Nginx Full'
 }
@@ -112,6 +147,20 @@ install_wings() {
     systemctl start wings
 }
 
+# Fungsi untuk membuat akun admin
+create_admin_account() {
+    echo "7. Membuat akun admin panel Pterodactyl..."
+    echo "Masukkan nama pengguna admin: "
+    read ADMIN_USER
+    echo "Masukkan email admin: "
+    read ADMIN_EMAIL
+    echo "Masukkan password admin: "
+    read -s ADMIN_PASS
+
+    php /var/www/pterodactyl/artisan p:user:make $ADMIN_USER $ADMIN_EMAIL $ADMIN_PASS --admin
+    echo "Akun admin $ADMIN_USER telah dibuat."
+}
+
 # Menu utama
 while true; do
     clear
@@ -134,6 +183,7 @@ while true; do
             install_panel
             setup_nginx
             install_wings
+            create_admin_account  # Menambahkan pembuatan akun admin
             echo "Instalasi selesai!"
             break
             ;;
@@ -143,6 +193,7 @@ while true; do
             setup_database
             install_panel
             setup_nginx
+            create_admin_account  # Menambahkan pembuatan akun admin
             echo "Panel telah diinstal!"
             break
             ;;
