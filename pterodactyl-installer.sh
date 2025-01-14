@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Skrip Installer Pterodactyl dengan Menu Pilihan, Akun Admin Default, dan Domain Utama serta Node
+# Skrip Installer Pterodactyl dengan Menu Pilihan dan Fitur Tambahan
 
 # Periksa hak akses root
 if [ "$EUID" -ne 0 ]; then
@@ -8,67 +8,93 @@ if [ "$EUID" -ne 0 ]; then
     exit
 fi
 
-# Fungsi untuk instalasi dependensi dasar
+# Cek koneksi internet
+check_internet() {
+    echo "Memeriksa koneksi internet..."
+    if ! ping -c 1 google.com &>/dev/null; then
+        echo "Koneksi internet tidak tersedia. Pastikan server terhubung ke internet."
+        exit 1
+    fi
+}
+
+# Cek ruang disk dan memori
+check_resources() {
+    echo "Memeriksa ruang disk dan memori..."
+    DISK_SPACE=$(df / | grep / | awk '{ print $4 }')
+    MEMORY=$(free -m | grep Mem | awk '{ print $2 }')
+
+    if [ "$DISK_SPACE" -lt 1000000 ]; then
+        echo "Peringatan: Ruang disk kurang dari 1GB, pastikan ada cukup ruang disk untuk instalasi."
+    fi
+
+    if [ "$MEMORY" -lt 1024 ]; then
+        echo "Peringatan: Memori kurang dari 1GB, pastikan ada cukup memori untuk menjalankan panel."
+    fi
+}
+
+# Fungsi untuk instalasi dependensi dasar dengan timeout
 install_dependencies() {
     echo "1. Memperbarui sistem dan menginstal dependensi..."
-    apt update && apt upgrade -y
-    apt install -y curl zip unzip tar wget git nginx mariadb-server software-properties-common ufw
+    timeout 600 apt update && apt upgrade -y
+    timeout 600 apt install -y curl zip unzip tar wget git nginx mariadb-server software-properties-common ufw
 }
 
-# Fungsi untuk menginstal PHP dan Composer
+# Fungsi untuk menginstal PHP dan Composer dengan timeout
 install_php_composer() {
     echo "2. Menginstal PHP dan Composer..."
-    add-apt-repository -y ppa:ondrej/php
-    apt update
-    apt install -y php8.1-cli php8.1-fpm php8.1-mysql php8.1-curl php8.1-mbstring php8.1-xml php8.1-bcmath php8.1-json php8.1-common php8.1-tokenizer php8.1-zip
-    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    timeout 600 add-apt-repository -y ppa:ondrej/php
+    timeout 600 apt update
+    timeout 600 apt install -y php8.1-cli php8.1-fpm php8.1-mysql php8.1-curl php8.1-mbstring php8.1-xml php8.1-bcmath php8.1-json php8.1-common php8.1-tokenizer php8.1-zip
+    timeout 600 curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 }
 
-# Fungsi untuk mengatur database
+# Fungsi untuk mengatur database dengan timeout
 setup_database() {
     echo "3. Mengatur database untuk Pterodactyl..."
     DB_PASSWORD=$(openssl rand -base64 12)
-    mysql -e "CREATE DATABASE panel;"
-    mysql -e "CREATE USER 'pterodactyl'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
-    mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'localhost';"
-    mysql -e "FLUSH PRIVILEGES;"
+    timeout 600 mysql -e "CREATE DATABASE panel;"
+    timeout 600 mysql -e "CREATE USER 'pterodactyl'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
+    timeout 600 mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'localhost';"
+    timeout 600 mysql -e "FLUSH PRIVILEGES;"
     echo "Informasi database:"
     echo "Nama Database: panel"
     echo "User: pterodactyl"
     echo "Password: ${DB_PASSWORD}"
 }
 
-# Fungsi untuk instalasi Pterodactyl Panel
+# Fungsi untuk instalasi Pterodactyl Panel dengan timeout
 install_panel() {
     echo "4. Menginstal Pterodactyl Panel..."
     mkdir -p /var/www/pterodactyl
     cd /var/www/pterodactyl
-    curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-    tar -xzvf panel.tar.gz && rm panel.tar.gz
-    composer install --no-dev --optimize-autoloader
-    cp .env.example .env
-    php artisan key:generate --force
-    php artisan p:environment:setup
-    php artisan p:environment:database
-    php artisan migrate --seed --force
+    timeout 600 curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
+    timeout 600 tar -xzvf panel.tar.gz && rm panel.tar.gz
+    timeout 600 composer install --no-dev --optimize-autoloader
+    timeout 600 cp .env.example .env
+    timeout 600 php artisan key:generate --force
+    timeout 600 php artisan p:environment:setup
+    timeout 600 php artisan p:environment:database
+    timeout 600 php artisan migrate --seed --force
     chown -R www-data:www-data /var/www/pterodactyl
     chmod -R 755 /var/www/pterodactyl
 }
 
-# Fungsi untuk mengonfigurasi Nginx
+# Fungsi untuk mengonfigurasi Nginx dengan timeout
 setup_nginx() {
     echo "5. Mengonfigurasi Nginx..."
-    
-    # Meminta input domain utama dan node
-    echo "Masukkan domain utama Anda (tanpa http/https): "
-    read MAIN_DOMAIN
-    echo "Masukkan domain node Anda (tanpa http/https): "
-    read NODE_DOMAIN
+    # Jika hanya menginstal panel, hanya perlu meminta domain utama
+    if [ "$INSTALL_WINGS" != "true" ]; then
+        echo "Masukkan domain utama Anda (tanpa http/https): "
+        read DOMAIN
+    else
+        # Jika Wings juga diinstal, domain tetap diminta
+        echo "Masukkan domain utama untuk Panel dan Wings (tanpa http/https): "
+        read DOMAIN
+    fi
 
-    # Konfigurasi Nginx untuk domain utama
     echo "server {
         listen 80;
-        server_name $MAIN_DOMAIN;
+        server_name $DOMAIN;
 
         root /var/www/pterodactyl/public;
 
@@ -90,44 +116,15 @@ setup_nginx() {
         }
     }" > /etc/nginx/sites-available/pterodactyl
 
-    # Konfigurasi Nginx untuk domain node
-    echo "server {
-        listen 80;
-        server_name $NODE_DOMAIN;
-
-        root /var/www/pterodactyl/public;
-
-        index index.php;
-
-        location / {
-            try_files \$uri \$uri/ /index.php?\$query_string;
-        }
-
-        location ~ \.php\$ {
-            include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
-            fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-            include fastcgi_params;
-        }
-
-        location ~ /\.ht {
-            deny all;
-        }
-    }" > /etc/nginx/sites-available/node
-
-    # Membuat symbolic links agar Nginx menggunakan konfigurasi tersebut
     ln -s /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/
-    ln -s /etc/nginx/sites-available/node /etc/nginx/sites-enabled/
-    
-    # Menguji konfigurasi dan merestart Nginx
-    nginx -t && systemctl restart nginx
+    timeout 600 nginx -t && systemctl restart nginx
     ufw allow 'Nginx Full'
 }
 
-# Fungsi untuk instalasi Wings
+# Fungsi untuk instalasi Wings dengan timeout
 install_wings() {
     echo "6. Menginstal Wings..."
-    curl -Lo /usr/local/bin/wings https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64
+    timeout 600 curl -Lo /usr/local/bin/wings https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64
     chmod +x /usr/local/bin/wings
     mkdir -p /etc/pterodactyl
     echo "[Unit]
@@ -147,18 +144,12 @@ install_wings() {
     systemctl start wings
 }
 
-# Fungsi untuk membuat akun admin
-create_admin_account() {
-    echo "7. Membuat akun admin panel Pterodactyl..."
-    echo "Masukkan nama pengguna admin: "
-    read ADMIN_USER
-    echo "Masukkan email admin: "
-    read ADMIN_EMAIL
-    echo "Masukkan password admin: "
-    read -s ADMIN_PASS
-
-    php /var/www/pterodactyl/artisan p:user:make $ADMIN_USER $ADMIN_EMAIL $ADMIN_PASS --admin
-    echo "Akun admin $ADMIN_USER telah dibuat."
+# Pengaturan firewall lebih lanjut (misalnya membatasi akses SSH)
+setup_firewall() {
+    echo "7. Mengonfigurasi firewall..."
+    ufw allow OpenSSH
+    ufw enable
+    ufw allow 'Nginx Full'
 }
 
 # Menu utama
@@ -168,7 +159,7 @@ while true; do
     echo "Installer Pterodactyl Panel + Wings"
     echo "=============================="
     echo "Pilih opsi:"
-    echo "0. Instal semua (Panel + Wings)"
+    echo "0. Instal semua (Panel + Wings + Pengaturan tambahan)"
     echo "1. Instal Pterodactyl Panel saja"
     echo "2. Instal Wings saja"
     echo "3. Keluar"
@@ -177,27 +168,35 @@ while true; do
 
     case $choice in
         0)
+            INSTALL_WINGS=true
+            check_internet
+            check_resources
             install_dependencies
             install_php_composer
             setup_database
             install_panel
             setup_nginx
             install_wings
-            create_admin_account  # Menambahkan pembuatan akun admin
+            setup_firewall
             echo "Instalasi selesai!"
             break
             ;;
         1)
+            INSTALL_WINGS=false
+            check_internet
+            check_resources
             install_dependencies
             install_php_composer
             setup_database
             install_panel
             setup_nginx
-            create_admin_account  # Menambahkan pembuatan akun admin
             echo "Panel telah diinstal!"
             break
             ;;
         2)
+            INSTALL_WINGS=true
+            check_internet
+            check_resources
             install_wings
             echo "Wings telah diinstal!"
             break
