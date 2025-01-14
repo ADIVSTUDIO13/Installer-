@@ -8,15 +8,6 @@ if [ "$EUID" -ne 0 ]; then
     exit
 fi
 
-# Cek koneksi internet
-check_internet() {
-    echo "Memeriksa koneksi internet..."
-    if ! ping -c 1 google.com &>/dev/null; then
-        echo "Koneksi internet tidak tersedia. Pastikan server terhubung ke internet."
-        exit 1
-    fi
-}
-
 # Cek ruang disk dan memori
 check_resources() {
     echo "Memeriksa ruang disk dan memori..."
@@ -144,14 +135,6 @@ install_wings() {
     systemctl start wings
 }
 
-# Pengaturan firewall lebih lanjut (misalnya membatasi akses SSH)
-setup_firewall() {
-    echo "7. Mengonfigurasi firewall..."
-    ufw allow OpenSSH
-    ufw enable
-    ufw allow 'Nginx Full'
-}
-
 # Menu utama
 while true; do
     clear
@@ -169,7 +152,6 @@ while true; do
     case $choice in
         0)
             INSTALL_WINGS=true
-            check_internet
             check_resources
             install_dependencies
             install_php_composer
@@ -177,13 +159,11 @@ while true; do
             install_panel
             setup_nginx
             install_wings
-            setup_firewall
             echo "Instalasi selesai!"
             break
             ;;
         1)
             INSTALL_WINGS=false
-            check_internet
             check_resources
             install_dependencies
             install_php_composer
@@ -195,7 +175,6 @@ while true; do
             ;;
         2)
             INSTALL_WINGS=true
-            check_internet
             check_resources
             install_wings
             echo "Wings telah diinstal!"
