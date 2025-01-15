@@ -64,7 +64,7 @@ configure_ufw() {
 
   # Set default policies to deny incoming traffic and allow outgoing
   sudo ufw default deny incoming
-  sudo ufw default allow outgoing
+  sudo ufufw default allow outgoing
 
   # Enable UFW
   sudo ufw enable
@@ -111,6 +111,36 @@ configure_syn_cookies() {
   echo "SYN Cookies protection is enabled."
 }
 
+# Monitor Fail2Ban log to detect DDoS attempts
+monitor_fail2ban() {
+  echo "Monitoring Fail2Ban logs for DDoS attempts..."
+
+  # Check the Fail2Ban log for banned IPs
+  tail -f /var/log/fail2ban.log | grep "Ban"
+}
+
+# Monitor network connections using ss
+monitor_network_connections() {
+  echo "Monitoring active network connections..."
+
+  # Display active connections and monitor for unusual activity
+  while true; do
+    clear
+    echo "Active network connections:"
+    sudo ss -tuln
+    echo -e "\nPress [CTRL+C] to stop monitoring."
+    sleep 5
+  done
+}
+
+# Monitor iptables rate-limiting and blocked IPs
+monitor_iptables() {
+  echo "Monitoring iptables for blocked IPs..."
+
+  # Show the number of connections made by each IP and look for rate-limiting blocks
+  sudo iptables -L -v -n | grep "DROP"
+}
+
 # Main menu loop
 main_menu() {
   local done=false
@@ -123,6 +153,9 @@ main_menu() {
       "Configure UFW firewall (Anti-DDoS)"
       "Enable TCP SYN Cookies (Anti-DDoS)"
       "Configure IPv6 Rate-Limiting (Anti-DDoS)"
+      "Monitor Fail2Ban logs for DDoS"
+      "Monitor network connections for DDoS"
+      "Monitor iptables for blocked IPs"
     )
 
     actions=(
@@ -133,6 +166,9 @@ main_menu() {
       "configure_ufw"
       "configure_syn_cookies"
       "configure_ipv6_rate_limiting"
+      "monitor_fail2ban"
+      "monitor_network_connections"
+      "monitor_iptables"
     )
 
     echo -e "\033[36mWhat would you like to do?\033[0m"
@@ -151,14 +187,12 @@ main_menu() {
 
     done=true
     IFS=";" read -r i1 i2 <<<"${actions[$action]}"
-    if [[ "$i1" == "configure_fail2ban" ]]; then
-      configure_fail2ban
-    elif [[ "$i1" == "configure_ufw" ]]; then
-      configure_ufw
-    elif [[ "$i1" == "configure_syn_cookies" ]]; then
-      configure_syn_cookies
-    elif [[ "$i1" == "configure_ipv6_rate_limiting" ]]; then
-      configure_ipv6_rate_limiting
+    if [[ "$i1" == "monitor_fail2ban" ]]; then
+      monitor_fail2ban
+    elif [[ "$i1" == "monitor_network_connections" ]]; then
+      monitor_network_connections
+    elif [[ "$i1" == "monitor_iptables" ]]; then
+      monitor_iptables
     else
       execute "$i1" "$i2"
     fi
