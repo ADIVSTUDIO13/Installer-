@@ -34,26 +34,12 @@ separator() {
   echo "--------------------------------------------------------------------------------"
 }
 
-# Fungsi untuk memeriksa sumber daya sistem
-check_resources() {
-  output "Memeriksa sumber daya sistem..."
-  DISK_SPACE=$(df / | grep / | awk '{ print $4 }')
-  MEMORY=$(free -m | grep Mem | awk '{ print $2 }')
-
-  if [ "$DISK_SPACE" -lt 1000000 ]; then
-    warning "Ruang disk kurang dari 1GB. Disarankan menyediakan lebih banyak ruang."
-  fi
-
-  if [ "$MEMORY" -lt 1024 ]; then
-    warning "Memori kurang dari 1GB. Disarankan menggunakan server dengan memori lebih tinggi."
-  fi
-}
-
 # Fungsi untuk instalasi dependensi dasar
 install_dependencies() {
   output "Menginstal dependensi dasar..."
   apt update && apt upgrade -y
-  apt install -y curl zip unzip tar wget git nginx mariadb-server software-properties-common ufw
+  apt install -y curl zip unzip tar wget git nginx mariadb-server software-properties-common ufw \
+    build-essential libssl-dev libcurl4-openssl-dev zlib1g-dev
 }
 
 # Fungsi untuk menginstal PHP dan Composer
@@ -103,6 +89,9 @@ setup_nginx() {
   output "Mengonfigurasi Nginx..."
   echo -n "Masukkan domain utama Anda (tanpa http/https): "
   read DOMAIN
+  echo -n "Masukkan domain untuk node Anda (tanpa http/https): "
+  read NODE_DOMAIN
+
   echo "server {
         listen 80;
         server_name $DOMAIN;
@@ -124,6 +113,19 @@ setup_nginx() {
 
         location ~ /\.ht {
             deny all;
+        }
+    }
+
+    server {
+        listen 80;
+        server_name $NODE_DOMAIN;
+
+        location / {
+            proxy_pass http://127.0.0.1:8080;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
         }
     }" > /etc/nginx/sites-available/pterodactyl
 
@@ -155,22 +157,6 @@ install_wings() {
   systemctl start wings
 }
 
-# Fungsi untuk eksekusi perintah
-execute() {
-  echo -e "\n\n* custom-pterodactyl-installer $(date) \n\n" >>$LOG_PATH
-  "$1" |& tee -a $LOG_PATH
-}
-
-# Tampilkan pesan selamat datang
-welcome_message() {
-  separator
-  echo -e "\e[1;36mSelamat datang di Custom Pterodactyl Installer!\e[0m"
-  echo "Skrip ini akan membantu Anda menginstal Pterodactyl Panel dan/atau Wings."
-  separator
-}
-
-welcome_message
-
 # Menu utama
 done=false
 while [ "$done" == false ]; do
@@ -182,8 +168,8 @@ while [ "$done" == false ]; do
   )
 
   actions=(
-    "install_panel"
-    "install_wings"
+    "install_dependencies;install_php_composer;setup_database;install_panel;setup_nginx"
+    "install_dependencies;install_wings"
     "install_dependencies;install_php_composer;setup_database;install_panel;setup_nginx;install_wings"
     "exit"
   )
@@ -202,7 +188,7 @@ while [ "$done" == false ]; do
   valid_input=("$(for ((i = 0; i <= ${#actions[@]} - 1; i += 1)); do echo "${i}"; done)")
   [[ ! " ${valid_input[*]} " =~ ${action} ]] && error "Pilihan tidak valid." && continue
 
-  [[ " ${valid_input[*]} " =~ ${action} ]] && done=true && IFS=";" read -r i1 i2 <<<"${actions[$action]}" && execute "$i1" "$i2"
+  [[ " ${valid_input[*]} " =~ ${action} ]] && done=true && IFS=";" read -r i1 i2 <<<"${actions[$action]}" && $i1 && [[ -n $i2 ]] && $i2
 done
 
 output "Terima kasih telah menggunakan Custom Pterodactyl Installer!"
