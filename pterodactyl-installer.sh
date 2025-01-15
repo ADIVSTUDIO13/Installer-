@@ -64,7 +64,7 @@ configure_ufw() {
 
   # Set default policies to deny incoming traffic and allow outgoing
   sudo ufw default deny incoming
-  sudo ufufw default allow outgoing
+  sudo ufw default allow outgoing
 
   # Enable UFW
   sudo ufw enable
@@ -111,6 +111,71 @@ configure_syn_cookies() {
   echo "SYN Cookies protection is enabled."
 }
 
+# Configure SSL with QUIC (HTTP/3)
+configure_ssl_quic() {
+  echo "Installing Certbot and configuring SSL with QUIC (HTTP/3)..."
+
+  # Install Certbot
+  sudo apt update
+  sudo apt install -y certbot python3-certbot-nginx
+
+  # Ensure Nginx is installed (if not already installed)
+  if ! command -v nginx &> /dev/null; then
+    echo "Nginx is not installed. Installing Nginx..."
+    sudo apt install -y nginx
+  fi
+
+  # Ensure UFW allows HTTPS traffic
+  sudo ufw allow 'Nginx Full'
+
+  # Obtain SSL certificate using Certbot
+  echo -n "Enter your domain name (e.g., example.com): "
+  read -r DOMAIN
+
+  # Use Certbot to obtain and install the SSL certificate
+  sudo certbot --nginx -d "$DOMAIN" --agree-tos --non-interactive --email your-email@example.com
+
+  # Set up automatic certificate renewal
+  sudo systemctl enable certbot.timer
+  sudo systemctl start certbot.timer
+
+  # Enable QUIC (HTTP/3) in NGINX
+  echo "Enabling QUIC (HTTP/3) in NGINX configuration..."
+
+  # Modify NGINX configuration to support QUIC (HTTP/3)
+  sudo bash -c 'cat <<EOF > /etc/nginx/sites-available/default
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+
+    # Enable QUIC (HTTP/3)
+    ssl_protocols TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256';
+
+    add_header Alt-Svc 'h3-23=":443"'; # Advertise QUIC to browsers
+    add_header QUIC-Status $upstream_http_quic_status;
+
+    # Enable HTTP/3 (QUIC)
+    http3 on;
+    listen 443 quic reuseport;
+    listen [::]:443 quic reuseport;
+    add_header QUIC-Status $quic_status;
+
+    # Other server block configurations...
+}
+EOF'
+
+  # Restart NGINX to apply the changes
+  sudo systemctl restart nginx
+
+  echo "SSL and QUIC (HTTP/3) configuration complete. Your domain is now secured with HTTPS and QUIC (HTTP/3)."
+}
+
 # Monitor Fail2Ban log to detect DDoS attempts
 monitor_fail2ban() {
   echo "Monitoring Fail2Ban logs for DDoS attempts..."
@@ -153,6 +218,7 @@ main_menu() {
       "Configure UFW firewall (Anti-DDoS)"
       "Enable TCP SYN Cookies (Anti-DDoS)"
       "Configure IPv6 Rate-Limiting (Anti-DDoS)"
+      "Configure SSL with QUIC (HTTP/3)"
       "Monitor Fail2Ban logs for DDoS"
       "Monitor network connections for DDoS"
       "Monitor iptables for blocked IPs"
@@ -166,6 +232,7 @@ main_menu() {
       "configure_ufw"
       "configure_syn_cookies"
       "configure_ipv6_rate_limiting"
+      "configure_ssl_quic"
       "monitor_fail2ban"
       "monitor_network_connections"
       "monitor_iptables"
