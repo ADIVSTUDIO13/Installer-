@@ -78,33 +78,29 @@ execute() {
   fi
 }
 
-# Configure Wings
+# Configure Wings using token and start service
 configure_wings() {
   echo "Configuring Wings..."
 
   # Prompt user for necessary configuration settings
-  echo -n "Enter the IP address for Wings: "
-  read -r WINGS_IP
-  echo -n "Enter the port for Wings (default 8080): "
-  read -r WINGS_PORT
-  WINGS_PORT=${WINGS_PORT:-8080}  # Default to 8080 if not provided
+  echo -n "Enter the panel URL (e.g., https://your-panel-url): "
+  read -r PANEL_URL
+  echo -n "Enter the token for Wings: "
+  read -r TOKEN
+  echo -n "Enter the node domain (e.g., node1.example.com): "
+  read -r NODE_DOMAIN
 
-  # Here we assume Wings config file is located at /etc/pterodactyl/config.yml (adjust as needed)
-  CONFIG_FILE="/etc/pterodactyl/config.yml"
+  # Run Wings configuration with the provided details
+  echo "Running: cd /etc/pterodactyl && sudo wings configure --panel-url $PANEL_URL --token $TOKEN --node $NODE_DOMAIN"
+  cd /etc/pterodactyl && sudo wings configure --panel-url "$PANEL_URL" --token "$TOKEN" --node "$NODE_DOMAIN"
 
-  # Modify the config file with the provided information
-  if [[ -f "$CONFIG_FILE" ]]; then
-    echo "Updating Wings configuration..."
+  # Start and enable the Wings service using systemctl
+  echo "Starting Wings service..."
+  sudo systemctl start wings
+  sudo systemctl enable wings
+  echo "Wings service started and enabled."
 
-    # Example of modifying config values
-    sed -i "s/host: .*/host: $WINGS_IP/" "$CONFIG_FILE"
-    sed -i "s/port: .*/port: $WINGS_PORT/" "$CONFIG_FILE"
-
-    echo "Wings configuration updated successfully."
-  else
-    echo "Error: Configuration file $CONFIG_FILE not found. Please check your installation."
-    exit 1
-  fi
+  echo "Wings configuration completed and service is running."
 }
 
 # Display welcome message
