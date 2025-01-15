@@ -1,5 +1,5 @@
- #!/bin/bash
- 
+#!/bin/bash
+
 set -e
 
 ######################################################################################
@@ -64,7 +64,7 @@ configure_ufw() {
 
   # Set default policies to deny incoming traffic and allow outgoing
   sudo ufw default deny incoming
-  sudo ufufw default allow outgoing
+  sudo ufw default allow outgoing
 
   # Enable UFW
   sudo ufw enable
@@ -211,10 +211,9 @@ execute() {
     echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
     read -r CONFIRM
     if [[ "$CONFIRM" =~ [Yy] ]]; then
-      execut
-e "$2"
+      execute "$2"
     else
-      error "Installation of $2 aborted."
+      echo "Installation of $2 aborted."
       exit 1
     fi
   fi
@@ -226,6 +225,7 @@ cleanup() {
 }
 
 # Main script execution
+LOG_PATH="/var/log/pterodactyl-installer.log" # Initialize LOG_PATH
 welcome_message
 prompt_password
 main_menu
