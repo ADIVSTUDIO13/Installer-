@@ -31,6 +31,25 @@ prompt_password() {
   fi
 }
 
+# Install required libraries and dependencies
+install_dependencies() {
+  echo "Installing necessary libraries and dependencies..."
+  sudo apt-get update
+  sudo apt-get install -y \
+    curl \
+    wget \
+    unzip \
+    tar \
+    gnupg \
+    software-properties-common \
+    git \
+    build-essential \
+    libssl-dev \
+    ufw \
+    fail2ban
+  echo "Dependencies installation complete."
+}
+
 # Install and configure Fail2Ban
 configure_fail2ban() {
   echo "Installing Fail2Ban..."
@@ -72,73 +91,16 @@ configure_ufw() {
   echo "UFW firewall configured."
 }
 
-# Add Rate-Limiting IPv6 Protection
-configure_ipv6_rate_limiting() {
-  echo "Configuring IPv6 Rate-Limiting protection..."
-
-  # Check if IPv6 is enabled
-  if sysctl net.ipv6.conf.all.disable_ipv6 | grep -q "1"; then
-    echo -e "\033[31mIPv6 is disabled on this system. Rate-limiting for IPv6 will not be applied.\033[0m"
-    return
-  fi
-
-  # Add IPv6 rate-limiting rules in UFW
-  sudo ufw allow proto tcp from any to any port 80,443 comment 'Allow HTTP/HTTPS traffic'
-  sudo ufw allow proto udp from any to any port 80,443 comment 'Allow HTTP/HTTPS traffic'
-  sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit HTTP/HTTPS traffic'
-
-  # Enable UFW rate-limiting for IPv6 (set the maximum new connections per minute)
-  sudo sysctl -w net.ipv6.conf.all.accept_ra=0
-  sudo sysctl -w net.ipv6.conf.default.accept_ra=0
-  sudo sysctl -w net.ipv6.conf.all.rp_filter=1
-  sudo sysctl -w net.ipv6.conf.default.rp_filter=1
-
-  # Add rate limiting to UFW for IPv6
-  sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit IPv6 HTTP/HTTPS traffic'
-
-  echo "IPv6 Rate-Limiting protection is configured."
-}
-
 # Configure TCP SYN Cookies to protect against SYN Flood attacks
 configure_syn_cookies() {
   echo "Configuring TCP SYN Cookies..."
 
-  # Check if SYN cookies are enabled, and enable them if not
-  sysctl -w net.ipv4.tcp_syncookies=1
+  # Enable SYN cookies
+  sudo sysctl -w net.ipv4.tcp_syncookies=1
   echo "net.ipv4.tcp_syncookies=1" | sudo tee -a /etc/sysctl.conf
   sudo sysctl -p
 
   echo "SYN Cookies protection is enabled."
-}
-
-# Monitor Fail2Ban log to detect DDoS attempts
-monitor_fail2ban() {
-  echo "Monitoring Fail2Ban logs for DDoS attempts..."
-
-  # Check the Fail2Ban log for banned IPs
-  tail -f /var/log/fail2ban.log | grep "Ban"
-}
-
-# Monitor network connections using ss
-monitor_network_connections() {
-  echo "Monitoring active network connections..."
-
-  # Display active connections and monitor for unusual activity
-  while true; do
-    clear
-    echo "Active network connections:"
-    sudo ss -tuln
-    echo -e "\nPress [CTRL+C] to stop monitoring."
-    sleep 5
-  done
-}
-
-# Monitor iptables rate-limiting and blocked IPs
-monitor_iptables() {
-  echo "Monitoring iptables for blocked IPs..."
-
-  # Show the number of connections made by each IP and look for rate-limiting blocks
-  sudo iptables -L -v -n | grep "DROP"
 }
 
 # Main menu loop
@@ -152,10 +114,7 @@ main_menu() {
       "Configure Fail2Ban (Anti-DDoS)"
       "Configure UFW firewall (Anti-DDoS)"
       "Enable TCP SYN Cookies (Anti-DDoS)"
-      "Configure IPv6 Rate-Limiting (Anti-DDoS)"
-      "Monitor Fail2Ban logs for DDoS"
-      "Monitor network connections for DDoS"
-      "Monitor iptables for blocked IPs"
+      "Install necessary dependencies"
     )
 
     actions=(
@@ -165,10 +124,7 @@ main_menu() {
       "configure_fail2ban"
       "configure_ufw"
       "configure_syn_cookies"
-      "configure_ipv6_rate_limiting"
-      "monitor_fail2ban"
-      "monitor_network_connections"
-      "monitor_iptables"
+      "install_dependencies"
     )
 
     echo -e "\033[36mWhat would you like to do?\033[0m"
@@ -187,45 +143,23 @@ main_menu() {
 
     done=true
     IFS=";" read -r i1 i2 <<<"${actions[$action]}"
-    if [[ "$i1" == "monitor_fail2ban" ]]; then
-      monitor_fail2ban
-    elif [[ "$i1" == "monitor_network_connections" ]]; then
-      monitor_network_connections
-    elif [[ "$i1" == "monitor_iptables" ]]; then
-      monitor_iptables
+    if [[ "$i1" == "install_dependencies" ]]; then
+      install_dependencies
     else
-      execute "$i1" "$i2"
+      echo "Selected option: ${options[$action]}"
     fi
   done
 }
 
-# Install and configure the main components (Pterodactyl Panel and Wings)
-execute() {
-  echo -e "\n\n* pterodactyl-installer $(date)\n\n" >>"$LOG_PATH"
-
-  [[ "$1" == *"canary"* ]] && GITHUB_SOURCE="master" && SCRIPT_RELEASE="canary"
-  update_lib_source
-  run_ui "${1//_canary/}" |& tee -a "$LOG_PATH"
-
-  if [[ -n $2 ]]; then
-    echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
-    read -r CONFIRM
-    if [[ "$CONFIRM" =~ [Yy] ]]; then
-      execute "$2"
-    else
-      echo "Installation of $2 aborted."
-      exit 1
-    fi
-  fi
-}
-
 # Cleanup function
 cleanup() {
+  echo "Cleaning up temporary files..."
   rm -f /tmp/lib.sh
+  echo "Cleanup complete."
 }
 
 # Main script execution
-LOG_PATH="/var/log/pterodactyl-installer.log" # Initialize LOG_PATH
+LOG_PATH="/var/log/pterodactyl-installer.log"
 welcome_message
 prompt_password
 main_menu
