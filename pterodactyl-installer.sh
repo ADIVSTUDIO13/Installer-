@@ -73,6 +73,16 @@ EOL'
   echo -e "${CYAN}Fail2Ban is configured and running.${RESET}"
 }
 
+# Uninstall Fail2Ban
+uninstall_fail2ban() {
+  echo -e "${YELLOW}Uninstalling Fail2Ban...${RESET}"
+  sudo systemctl stop fail2ban
+  sudo apt-get remove --purge -y fail2ban
+  sudo rm -rf /etc/fail2ban
+  sudo systemctl daemon-reload
+  echo -e "${CYAN}Fail2Ban has been uninstalled successfully.${RESET}"
+}
+
 # Setup UFW
 configure_ufw() {
   echo -e "${YELLOW}Setting up UFW firewall...${RESET}"
@@ -147,8 +157,9 @@ main_menu() {
     echo -e "[8] Monitor Active Network Connections"
     echo -e "[9] Monitor iptables Blocked IPs"
     echo -e "[10] Exit"
+    echo -e "[11] Uninstall Fail2Ban"
 
-    echo -n "Choose an option (0-10): "
+    echo -n "Choose an option (0-11): "
     read -r choice
 
     case "$choice" in
@@ -163,6 +174,7 @@ main_menu() {
       8) monitor_network_connections ;;
       9) monitor_iptables ;;
       10) echo -e "${CYAN}Exiting...${RESET}" && exit 0 ;;
+      11) uninstall_fail2ban ;;
       *) echo -e "${RED}Invalid choice. Please select a valid option.${RESET}" ;;
     esac
   done
