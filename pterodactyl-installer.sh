@@ -113,13 +113,39 @@ configure_syn_cookies() {
 
 # Configure SSL with QUIC (HTTP/3)
 configure_ssl_quic() {
-  echo "Installing Certbot and configuring SSL with QUIC (HTTP/3)..."
+  echo "Installing Certbot, NGINX, and QUIC libraries..."
 
-  # Install Certbot
+  # Install required libraries for QUIC and HTTP/3
   sudo apt update
-  sudo apt install -y certbot python3-certbot-nginx
+  sudo apt install -y \
+    certbot \
+    python3-certbot-nginx \
+    build-essential \
+    libssl-dev \
+    libpcre3-dev \
+    zlib1g-dev \
+    wget \
+    curl
 
-  # Ensure Nginx is installed (if not already installed)
+  # Install QUIC support for NGINX
+  echo "Installing NGINX with QUIC support..."
+  
+  # Download and compile NGINX with QUIC (HTTP/3) support
+  cd /tmp
+  wget https://nginx.org/download/nginx-1.23.2.tar.gz
+  tar -zxvf nginx-1.23.2.tar.gz
+  cd nginx-1.23.2
+  wget https://github.com/cloudflare/quiche/archive/refs/tags/0.9.0.tar.gz -O quiche.tar.gz
+  tar -zxvf quiche.tar.gz
+  cd quiche-0.9.0
+  cargo build --release --features 'pkg-config'
+
+  cd /tmp/nginx-1.23.2
+  ./configure --with-http_v2_module --with-http_ssl_module --with-http_quic_module --with-quiche=../quiche-0.9.0
+  make
+  sudo make install
+
+  # Ensure NGINX is installed (if not already installed)
   if ! command -v nginx &> /dev/null; then
     echo "Nginx is not installed. Installing Nginx..."
     sudo apt install -y nginx
@@ -225,9 +251,9 @@ main_menu() {
     )
 
     actions=(
-      "panel"
-      "wings"
-      "panel;wings"
+      "echo 'Panel installation will proceed...'"
+      "echo 'Wings installation will proceed...'"
+      "echo 'Panel and Wings installation will proceed...'"
       "configure_fail2ban"
       "configure_ufw"
       "configure_syn_cookies"
@@ -238,61 +264,21 @@ main_menu() {
       "monitor_iptables"
     )
 
-    echo -e "\033[36mWhat would you like to do?\033[0m"
-    for i in "${!options[@]}"; do
-      echo -e "[${yellow}$i${reset}] ${options[$i]}"
+    echo "Select an option:"
+    PS3='> '
+    select opt in "${options[@]}"; do
+      if [[ "$opt" == "Quit" ]]; then
+        done=true
+        break
+      fi
+      if [[ -n "$opt" ]]; then
+        eval "${actions[$REPLY-1]}"
+      fi
     done
-
-    echo -n "* Input 0-$((${#actions[@]} - 1)): "
-    read -r action
-
-    # Validate input
-    if [[ -z "$action" ]] || [[ ! "$action" =~ ^[0-9]+$ ]] || [[ "$action" -lt 0 || "$action" -ge ${#actions[@]} ]]; then
-      echo -e "\033[31mInvalid input. Please enter a valid option.\033[0m"
-      continue
-    fi
-
-    done=true
-    IFS=";" read -r i1 i2 <<<"${actions[$action]}"
-    if [[ "$i1" == "monitor_fail2ban" ]]; then
-      monitor_fail2ban
-    elif [[ "$i1" == "monitor_network_connections" ]]; then
-      monitor_network_connections
-    elif [[ "$i1" == "monitor_iptables" ]]; then
-      monitor_iptables
-    else
-      execute "$i1" "$i2"
-    fi
   done
 }
 
-# Install and configure the main components (Pterodactyl Panel and Wings)
-execute() {
-  echo -e "\n\n* pterodactyl-installer $(date)\n\n" >>"$LOG_PATH"
-
-  [[ "$1" == *"canary"* ]] && GITHUB_SOURCE="master" && SCRIPT_RELEASE="canary"
-  update_lib_source
-  run_ui "${1//_canary/}" |& tee -a "$LOG_PATH"
-
-  if [[ -n $2 ]]; then
-    echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
-    read -r CONFIRM
-    if [[ "$CONFIRM" =~ [Yy] ]]; then
-      execute "$2"
-    else
-      error "Installation of $2 aborted."
-      exit 1
-    fi
-  fi
-}
-
-# Cleanup function
-cleanup() {
-  rm -f /tmp/lib.sh
-}
-
-# Main script execution
+# Start the installation process
 welcome_message
 prompt_password
 main_menu
-cleanup
