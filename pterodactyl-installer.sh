@@ -111,95 +111,57 @@ configure_syn_cookies() {
   echo "SYN Cookies protection is enabled."
 }
 
-# Configure SSL with QUIC (HTTP/3)
+# Install and configure QUIC (HTTP/3)
 configure_ssl_quic() {
-  echo "Installing Certbot, NGINX, and QUIC libraries..."
+  echo "Installing dependencies for QUIC (HTTP/3)..."
 
-  # Install required libraries for QUIC and HTTP/3
-  sudo apt update
-  sudo apt install -y \
-    certbot \
-    python3-certbot-nginx \
-    build-essential \
-    libssl-dev \
-    libpcre3-dev \
-    zlib1g-dev \
-    wget \
-    curl
+  # Install Certbot and NGINX
+  sudo apt-get update
+  sudo apt-get install -y nginx certbot python3-certbot-nginx
 
-  # Install QUIC support for NGINX
-  echo "Installing NGINX with QUIC support..."
-  
-  # Download and compile NGINX with QUIC (HTTP/3) support
-  cd /tmp
-  wget https://nginx.org/download/nginx-1.23.2.tar.gz
-  tar -zxvf nginx-1.23.2.tar.gz
-  cd nginx-1.23.2
-  wget https://github.com/cloudflare/quiche/archive/refs/tags/0.9.0.tar.gz -O quiche.tar.gz
-  tar -zxvf quiche.tar.gz
-  cd quiche-0.9.0
-  cargo build --release --features 'pkg-config'
+  # Install NGINX with QUIC support
+  sudo apt-get install -y git build-essential
+  cd /opt
+  git clone --branch quic https://github.com/cloudflare/quiche.git
+  cd quiche
+  cargo build --release --features pkg-config
 
-  cd /tmp/nginx-1.23.2
-  ./configure --with-http_v2_module --with-http_ssl_module --with-http_quic_module --with-quiche=../quiche-0.9.0
-  make
-  sudo make install
+  # Configure NGINX to enable QUIC (HTTP/3)
+  echo "Configuring NGINX for QUIC and HTTP/3..."
 
-  # Ensure NGINX is installed (if not already installed)
-  if ! command -v nginx &> /dev/null; then
-    echo "Nginx is not installed. Installing Nginx..."
-    sudo apt install -y nginx
-  fi
-
-  # Ensure UFW allows HTTPS traffic
-  sudo ufw allow 'Nginx Full'
-
-  # Obtain SSL certificate using Certbot
-  echo -n "Enter your domain name (e.g., example.com): "
-  read -r DOMAIN
-
-  # Use Certbot to obtain and install the SSL certificate
-  sudo certbot --nginx -d "$DOMAIN" --agree-tos --non-interactive --email your-email@example.com
-
-  # Set up automatic certificate renewal
-  sudo systemctl enable certbot.timer
-  sudo systemctl start certbot.timer
-
-  # Enable QUIC (HTTP/3) in NGINX
-  echo "Enabling QUIC (HTTP/3) in NGINX configuration..."
-
-  # Modify NGINX configuration to support QUIC (HTTP/3)
-  sudo bash -c 'cat <<EOF > /etc/nginx/sites-available/default
+  sudo bash -c 'cat << EOF > /etc/nginx/sites-available/default
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name $DOMAIN;
 
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+    server_name example.com;
 
-    # Enable QUIC (HTTP/3)
+    # SSL settings
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
     ssl_protocols TLSv1.3;
     ssl_prefer_server_ciphers off;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256';
 
-    add_header Alt-Svc 'h3-23=":443"'; # Advertise QUIC to browsers
-    add_header QUIC-Status $upstream_http_quic_status;
-
-    # Enable HTTP/3 (QUIC)
+    # QUIC and HTTP/3 settings
+    ssl_dhparam /etc/ssl/certs/dhparam.pem;
+    add_header Alt-Svc 'h3-23=":443"'; # Enables QUIC
+    add_header QUIC-Status $quic;
+    
+    # HTTP/3 specific
     http3 on;
-    listen 443 quic reuseport;
-    listen [::]:443 quic reuseport;
-    add_header QUIC-Status $quic_status;
-
-    # Other server block configurations...
+    
+    root /var/www/html;
+    index index.html index.htm;
 }
 EOF'
 
-  # Restart NGINX to apply the changes
+  # Reload NGINX
   sudo systemctl restart nginx
 
-  echo "SSL and QUIC (HTTP/3) configuration complete. Your domain is now secured with HTTPS and QUIC (HTTP/3)."
+  # Obtain SSL certificate using Certbot
+  sudo certbot --nginx -d example.com --agree-tos --no-eff-email --email your-email@example.com
+
+  echo "QUIC and HTTP/3 configuration is complete."
 }
 
 # Monitor Fail2Ban log to detect DDoS attempts
@@ -244,16 +206,16 @@ main_menu() {
       "Configure UFW firewall (Anti-DDoS)"
       "Enable TCP SYN Cookies (Anti-DDoS)"
       "Configure IPv6 Rate-Limiting (Anti-DDoS)"
-      "Configure SSL with QUIC (HTTP/3)"
+      "Configure SSL QUIC (HTTP/3)"
       "Monitor Fail2Ban logs for DDoS"
       "Monitor network connections for DDoS"
       "Monitor iptables for blocked IPs"
     )
 
     actions=(
-      "echo 'Panel installation will proceed...'"
-      "echo 'Wings installation will proceed...'"
-      "echo 'Panel and Wings installation will proceed...'"
+      "panel"
+      "wings"
+      "panel;wings"
       "configure_fail2ban"
       "configure_ufw"
       "configure_syn_cookies"
@@ -264,21 +226,61 @@ main_menu() {
       "monitor_iptables"
     )
 
-    echo "Select an option:"
-    PS3='> '
-    select opt in "${options[@]}"; do
-      if [[ "$opt" == "Quit" ]]; then
-        done=true
-        break
-      fi
-      if [[ -n "$opt" ]]; then
-        eval "${actions[$REPLY-1]}"
-      fi
+    echo -e "\033[36mWhat would you like to do?\033[0m"
+    for i in "${!options[@]}"; do
+      echo -e "[${yellow}$i${reset}] ${options[$i]}"
     done
+
+    echo -n "* Input 0-$((${#actions[@]} - 1)): "
+    read -r action
+
+    # Validate input
+    if [[ -z "$action" ]] || [[ ! "$action" =~ ^[0-9]+$ ]] || [[ "$action" -lt 0 || "$action" -ge ${#actions[@]} ]]; then
+      echo -e "\033[31mInvalid input. Please enter a valid option.\033[0m"
+      continue
+    fi
+
+    done=true
+    IFS=";" read -r i1 i2 <<<"${actions[$action]}"
+    if [[ "$i1" == "monitor_fail2ban" ]]; then
+      monitor_fail2ban
+    elif [[ "$i1" == "monitor_network_connections" ]]; then
+      monitor_network_connections
+    elif [[ "$i1" == "monitor_iptables" ]]; then
+      monitor_iptables
+    else
+      execute "$i1" "$i2"
+    fi
   done
 }
 
-# Start the installation process
+# Install and configure the main components (Pterodactyl Panel and Wings)
+execute() {
+  echo -e "\n\n* pterodactyl-installer $(date)\n\n" >>"$LOG_PATH"
+
+  [[ "$1" == *"canary"* ]] && GITHUB_SOURCE="master" && SCRIPT_RELEASE="canary"
+  update_lib_source
+  run_ui "${1//_canary/}" |& tee -a "$LOG_PATH"
+
+  if [[ -n $2 ]]; then
+    echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
+    read -r CONFIRM
+    if [[ "$CONFIRM" =~ [Yy] ]]; then
+      execute "$2"
+    else
+      error "Installation of $2 aborted."
+      exit 1
+    fi
+  fi
+}
+
+# Cleanup function
+cleanup() {
+  rm -f /tmp/lib.sh
+}
+
+# Main script execution
 welcome_message
 prompt_password
 main_menu
+cleanup
