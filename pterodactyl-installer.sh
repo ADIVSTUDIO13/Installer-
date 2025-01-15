@@ -1,5 +1,5 @@
-#!/bin/bash
-
+ #!/bin/bash
+ 
 set -e
 
 ######################################################################################
@@ -64,7 +64,7 @@ configure_ufw() {
 
   # Set default policies to deny incoming traffic and allow outgoing
   sudo ufw default deny incoming
-  sudo ufw default allow outgoing
+  sudo ufufw default allow outgoing
 
   # Enable UFW
   sudo ufw enable
@@ -111,59 +111,6 @@ configure_syn_cookies() {
   echo "SYN Cookies protection is enabled."
 }
 
-# Install and configure QUIC (HTTP/3)
-configure_ssl_quic() {
-  echo "Installing dependencies for QUIC (HTTP/3)..."
-
-  # Install Certbot and NGINX
-  sudo apt-get update
-  sudo apt-get install -y nginx certbot python3-certbot-nginx
-
-  # Install NGINX with QUIC support
-  sudo apt-get install -y git build-essential
-  cd /opt
-  git clone --branch quic https://github.com/cloudflare/quiche.git
-  cd quiche
-  cargo build --release --features pkg-config
-
-  # Configure NGINX to enable QUIC (HTTP/3)
-  echo "Configuring NGINX for QUIC and HTTP/3..."
-
-  sudo bash -c 'cat << EOF > /etc/nginx/sites-available/default
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-
-    server_name example.com;
-
-    # SSL settings
-    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
-    ssl_protocols TLSv1.3;
-    ssl_prefer_server_ciphers off;
-
-    # QUIC and HTTP/3 settings
-    ssl_dhparam /etc/ssl/certs/dhparam.pem;
-    add_header Alt-Svc 'h3-23=":443"'; # Enables QUIC
-    add_header QUIC-Status $quic;
-    
-    # HTTP/3 specific
-    http3 on;
-    
-    root /var/www/html;
-    index index.html index.htm;
-}
-EOF'
-
-  # Reload NGINX
-  sudo systemctl restart nginx
-
-  # Obtain SSL certificate using Certbot
-  sudo certbot --nginx -d example.com --agree-tos --no-eff-email --email your-email@example.com
-
-  echo "QUIC and HTTP/3 configuration is complete."
-}
-
 # Monitor Fail2Ban log to detect DDoS attempts
 monitor_fail2ban() {
   echo "Monitoring Fail2Ban logs for DDoS attempts..."
@@ -206,7 +153,6 @@ main_menu() {
       "Configure UFW firewall (Anti-DDoS)"
       "Enable TCP SYN Cookies (Anti-DDoS)"
       "Configure IPv6 Rate-Limiting (Anti-DDoS)"
-      "Configure SSL QUIC (HTTP/3)"
       "Monitor Fail2Ban logs for DDoS"
       "Monitor network connections for DDoS"
       "Monitor iptables for blocked IPs"
@@ -220,7 +166,6 @@ main_menu() {
       "configure_ufw"
       "configure_syn_cookies"
       "configure_ipv6_rate_limiting"
-      "configure_ssl_quic"
       "monitor_fail2ban"
       "monitor_network_connections"
       "monitor_iptables"
@@ -266,7 +211,8 @@ execute() {
     echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
     read -r CONFIRM
     if [[ "$CONFIRM" =~ [Yy] ]]; then
-      execute "$2"
+      execut
+e "$2"
     else
       error "Installation of $2 aborted."
       exit 1
