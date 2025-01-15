@@ -78,6 +78,35 @@ execute() {
   fi
 }
 
+# Configure Wings
+configure_wings() {
+  echo "Configuring Wings..."
+
+  # Prompt user for necessary configuration settings
+  echo -n "Enter the IP address for Wings: "
+  read -r WINGS_IP
+  echo -n "Enter the port for Wings (default 8080): "
+  read -r WINGS_PORT
+  WINGS_PORT=${WINGS_PORT:-8080}  # Default to 8080 if not provided
+
+  # Here we assume Wings config file is located at /etc/pterodactyl/config.yml (adjust as needed)
+  CONFIG_FILE="/etc/pterodactyl/config.yml"
+
+  # Modify the config file with the provided information
+  if [[ -f "$CONFIG_FILE" ]]; then
+    echo "Updating Wings configuration..."
+
+    # Example of modifying config values
+    sed -i "s/host: .*/host: $WINGS_IP/" "$CONFIG_FILE"
+    sed -i "s/port: .*/port: $WINGS_PORT/" "$CONFIG_FILE"
+
+    echo "Wings configuration updated successfully."
+  else
+    echo "Error: Configuration file $CONFIG_FILE not found. Please check your installation."
+    exit 1
+  fi
+}
+
 # Display welcome message
 welcome ""
 
@@ -92,6 +121,7 @@ while [ "$done" == false ]; do
     "Install Wings with canary version of the script"
     "Install both [3] and [4] on the same machine (wings script runs after panel)"
     "Uninstall panel or wings with canary version of the script"
+    "Configure Wings"  # New option for configuring Wings
   )
 
   actions=(
@@ -102,6 +132,7 @@ while [ "$done" == false ]; do
     "wings_canary"
     "panel_canary;wings_canary"
     "uninstall_canary"
+    "configure_wings"  # Action for configuring Wings
   )
 
   output "What would you like to do?"
