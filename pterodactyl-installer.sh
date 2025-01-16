@@ -9,178 +9,189 @@ set -e
 # https://github.com/pterodactyl-installer/pterodactyl-installer                     #
 ######################################################################################
 
-# Colors
-CYAN="\033[36m"
-YELLOW="\033[33m"
-RED="\033[31m"
-RESET="\033[0m"
-
-LOG_PATH="/var/log/pterodactyl-installer.log"
-
-# Welcome message
+# Function to display a welcome message
 welcome_message() {
-  echo -e "${CYAN}\nWelcome to the Pterodactyl Installer by ARYASTORE!${RESET}"
-  echo -e "${YELLOW}This script will guide you through the installation process and server protection.${RESET}\n"
+  local cyan="\033[36m"
+  local yellow="\033[33m"
+  local reset="\033[0m"
+  echo -e "${cyan}\n\nWelcome to the installer Pterodactyl by ARYASTORE!${reset}"
+  echo -e "${yellow}This script will guide you through the installation process.${reset}\n"
 }
 
-# Password prompt
+# Prompt for password before proceeding
 prompt_password() {
   echo -n "Enter password to continue: "
   read -s PASSWORD
   echo
 
+  # Check if password is correct (password is 'aryastore')
   if [[ "$PASSWORD" != "aryastore" ]]; then
-    echo -e "${RED}Incorrect password. Exiting.${RESET}"
+    echo -e "\033[31mIncorrect password. Exiting.\033[0m"
     exit 1
   fi
 }
 
-# Install necessary libraries
-install_libraries() {
-  echo -e "${YELLOW}Installing necessary libraries...${RESET}"
-  sudo apt-get update
-  sudo apt-get install -y curl wget apt-transport-https gnupg software-properties-common ufw fail2ban htop
-  echo -e "${CYAN}Libraries installed successfully.${RESET}"
-}
-
-# Progress bar function
-progress_bar() {
-  local duration=$1
-  echo -ne "["
-  for ((i = 0; i < 50; i++)); do
-    sleep "$((duration / 50))"
-    echo -ne "#"
-  done
-  echo "] Done!"
-}
-
 # Install and configure Fail2Ban
 configure_fail2ban() {
-  echo -e "${YELLOW}Installing Fail2Ban...${RESET}"
+  echo "Installing Fail2Ban..."
   sudo apt-get install -y fail2ban
-  echo -e "${YELLOW}Configuring Fail2Ban...${RESET}"
+
+  echo "Configuring Fail2Ban..."
   sudo systemctl enable fail2ban
   sudo systemctl start fail2ban
 
-  sudo bash -c 'cat <<EOL > /etc/fail2ban/jail.local
-[DEFAULT]
-bantime = 3600
-findtime = 600
-maxretry = 3
-enabled = true
-EOL'
+  # Customize Fail2Ban settings (basic configuration)
+  echo "[DEFAULT]" | sudo tee -a /etc/fail2ban/jail.local
+  echo "bantime = 3600" | sudo tee -a /etc/fail2ban/jail.local
+  echo "findtime = 600" | sudo tee -a /etc/fail2ban/jail.local
+  echo "maxretry = 3" | sudo tee -a /etc/fail2ban/jail.local
+  echo "enabled = true" | sudo tee -a /etc/fail2ban/jail.local
 
-  echo -e "${CYAN}Fail2Ban is configured and running.${RESET}"
+  echo "Fail2Ban configuration complete."
 }
 
-# Uninstall Fail2Ban
-uninstall_fail2ban() {
-  echo -e "${YELLOW}Uninstalling Fail2Ban...${RESET}"
-  sudo systemctl stop fail2ban
-  sudo apt-get remove --purge -y fail2ban
-  sudo rm -rf /etc/fail2ban
-  sudo systemctl daemon-reload
-  echo -e "${CYAN}Fail2Ban has been uninstalled successfully.${RESET}"
-}
-
-# Setup UFW
+# Setup UFW firewall rules to protect from DDoS
 configure_ufw() {
-  echo -e "${YELLOW}Setting up UFW firewall...${RESET}"
+  echo "Setting up UFW firewall..."
+
+  # Allow basic services (SSH, HTTP, HTTPS)
   sudo ufw allow ssh
   sudo ufw allow http
   sudo ufw allow https
+
+  # Enable rate-limiting for SSH to prevent brute-force attacks
   sudo ufw limit ssh
+
+  # Set default policies to deny incoming traffic and allow outgoing
   sudo ufw default deny incoming
   sudo ufw default allow outgoing
-  echo "y" | sudo ufw enable
-  echo -e "${CYAN}UFW firewall is configured.${RESET}"
+
+  # Enable UFW
+  sudo ufw enable
+
+  echo "UFW firewall configured."
 }
 
-# Enable TCP SYN Cookies
+# Add Rate-Limiting IPv6 Protection
+configure_ipv6_rate_limiting() {
+  echo "Configuring IPv6 Rate-Limiting protection..."
+
+  # Check if IPv6 is enabled
+  if sysctl net.ipv6.conf.all.disable_ipv6 | grep -q "1"; then
+    echo -e "\033[31mIPv6 is disabled on this system. Rate-limiting for IPv6 will not be applied.\033[0m"
+    return
+  fi
+
+  # Add IPv6 rate-limiting rules in UFW
+  sudo ufw allow proto tcp from any to any port 80,443 comment 'Allow HTTP/HTTPS traffic'
+  sudo ufw allow proto udp from any to any port 80,443 comment 'Allow HTTP/HTTPS traffic'
+  sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit HTTP/HTTPS traffic'
+
+  # Enable UFW rate-limiting for IPv6 (set the maximum new connections per minute)
+  sudo sysctl -w net.ipv6.conf.all.accept_ra=0
+  sudo sysctl -w net.ipv6.conf.default.accept_ra=0
+  sudo sysctl -w net.ipv6.conf.all.rp_filter=1
+  sudo sysctl -w net.ipv6.conf.default.rp_filter=1
+
+  # Add rate limiting to UFW for IPv6
+  sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit IPv6 HTTP/HTTPS traffic'
+
+  echo "IPv6 Rate-Limiting protection is configured."
+}
+
+# Configure TCP SYN Cookies to protect against SYN Flood attacks
 configure_syn_cookies() {
-  echo -e "${YELLOW}Enabling TCP SYN Cookies...${RESET}"
-  sudo sysctl -w net.ipv4.tcp_syncookies=1
+  echo "Configuring TCP SYN Cookies..."
+
+  # Check if SYN cookies are enabled, and enable them if not
+  sysctl -w net.ipv4.tcp_syncookies=1
   echo "net.ipv4.tcp_syncookies=1" | sudo tee -a /etc/sysctl.conf
   sudo sysctl -p
-  echo -e "${CYAN}TCP SYN Cookies protection is enabled.${RESET}"
+
+  echo "SYN Cookies protection is enabled."
 }
 
-# Monitor Fail2Ban
-monitor_fail2ban() {
-  echo -e "${CYAN}Monitoring Fail2Ban logs for DDoS attempts...${RESET}"
-  sudo tail -f /var/log/fail2ban.log | grep "Ban"
-}
-
-# Monitor network connections
-monitor_network_connections() {
-  echo -e "${CYAN}Monitoring active network connections...${RESET}"
-  while true; do
-    clear
-    sudo ss -tuln
-    echo -e "\nPress [CTRL+C] to stop monitoring."
-    sleep 5
-  done
-}
-
-# Monitor iptables
-monitor_iptables() {
-  echo -e "${CYAN}Monitoring iptables for blocked IPs...${RESET}"
-  sudo iptables -L -v -n | grep "DROP"
-}
-
-# Install Pterodactyl Panel
-install_panel() {
-  echo -e "${YELLOW}Installing Pterodactyl Panel...${RESET}"
-  progress_bar 10
-  echo -e "${CYAN}Pterodactyl Panel installation complete.${RESET}"
-}
-
-# Install Wings
-install_wings() {
-  echo -e "${YELLOW}Installing Pterodactyl Wings...${RESET}"
-  progress_bar 10
-  echo -e "${CYAN}Pterodactyl Wings installation complete.${RESET}"
-}
-
-# Main menu
+# Main menu loop
 main_menu() {
-  while true; do
-    echo -e "${CYAN}\nMain Menu:${RESET}"
-    echo -e "[0] Install Necessary Libraries"
-    echo -e "[1] Install Pterodactyl Panel"
-    echo -e "[2] Install Wings"
-    echo -e "[3] Install Both (Panel and Wings)"
-    echo -e "[4] Configure Fail2Ban (Anti-DDoS)"
-    echo -e "[5] Configure UFW Firewall (Anti-DDoS)"
-    echo -e "[6] Enable TCP SYN Cookies (Anti-DDoS)"
-    echo -e "[7] Monitor Fail2Ban Logs"
-    echo -e "[8] Monitor Active Network Connections"
-    echo -e "[9] Monitor iptables Blocked IPs"
-    echo -e "[10] Exit"
-    echo -e "[11] Uninstall Fail2Ban"
+  local done=false
+  while [ "$done" == false ]; do
+    options=(
+      "Install the panel"
+      "Install Wings"
+      "Install both [0] and [1] on the same machine (wings script runs after panel)"
+      "Configure Fail2Ban (Anti-DDoS)"
+      "Configure UFW firewall (Anti-DDoS)"
+      "Enable TCP SYN Cookies (Anti-DDoS)"
+      "Configure IPv6 Rate-Limiting (Anti-DDoS)"
+    )
 
-    echo -n "Choose an option (0-11): "
-    read -r choice
+    actions=(
+      "panel"
+      "wings"
+      "panel;wings"
+      "configure_fail2ban"
+      "configure_ufw"
+      "configure_syn_cookies"
+      "configure_ipv6_rate_limiting"
+    )
 
-    case "$choice" in
-      0) install_libraries ;;
-      1) install_panel ;;
-      2) install_wings ;;
-      3) install_panel && install_wings ;;
-      4) configure_fail2ban ;;
-      5) configure_ufw ;;
-      6) configure_syn_cookies ;;
-      7) monitor_fail2ban ;;
-      8) monitor_network_connections ;;
-      9) monitor_iptables ;;
-      10) echo -e "${CYAN}Exiting...${RESET}" && exit 0 ;;
-      11) uninstall_fail2ban ;;
-      *) echo -e "${RED}Invalid choice. Please select a valid option.${RESET}" ;;
-    esac
+    echo -e "\033[36mWhat would you like to do?\033[0m"
+    for i in "${!options[@]}"; do
+      echo -e "[${yellow}$i${reset}] ${options[$i]}"
+    done
+
+    echo -n "* Input 0-$((${#actions[@]} - 1)): "
+    read -r action
+
+    # Validate input
+    if [[ -z "$action" ]] || [[ ! "$action" =~ ^[0-9]+$ ]] || [[ "$action" -lt 0 || "$action" -ge ${#actions[@]} ]]; then
+      echo -e "\033[31mInvalid input. Please enter a valid option.\033[0m"
+      continue
+    fi
+
+    done=true
+    IFS=";" read -r i1 i2 <<<"${actions[$action]}"
+    if [[ "$i1" == "configure_fail2ban" ]]; then
+      configure_fail2ban
+    elif [[ "$i1" == "configure_ufw" ]]; then
+      configure_ufw
+    elif [[ "$i1" == "configure_syn_cookies" ]]; then
+      configure_syn_cookies
+    elif [[ "$i1" == "configure_ipv6_rate_limiting" ]]; then
+      configure_ipv6_rate_limiting
+    else
+      execute "$i1" "$i2"
+    fi
   done
 }
 
-# Script execution starts here
+# Install and configure the main components (Pterodactyl Panel and Wings)
+execute() {
+  echo -e "\n\n* pterodactyl-installer $(date)\n\n" >>"$LOG_PATH"
+
+  [[ "$1" == *"canary"* ]] && GITHUB_SOURCE="master" && SCRIPT_RELEASE="canary"
+  update_lib_source
+  run_ui "${1//_canary/}" |& tee -a "$LOG_PATH"
+
+  if [[ -n $2 ]]; then
+    echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
+    read -r CONFIRM
+    if [[ "$CONFIRM" =~ [Yy] ]]; then
+      execute "$2"
+    else
+      error "Installation of $2 aborted."
+      exit 1
+    fi
+  fi
+}
+
+# Cleanup function
+cleanup() {
+  rm -f /tmp/lib.sh
+}
+
+# Main script execution
 welcome_message
 prompt_password
 main_menu
+cleanup
