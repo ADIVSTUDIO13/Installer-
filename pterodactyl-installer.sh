@@ -4,7 +4,6 @@ set -e
 
 ######################################################################################
 # Project 'pterodactyl-installer'                                                    #
-# Copyright (C) 2018 - 2025, Vilhelm Prytz, <vilhelm@prytznet.se>                    #
 # This script is not associated with the official Pterodactyl Project.               #
 # https://github.com/pterodactyl-installer/pterodactyl-installer                     #
 ######################################################################################
@@ -14,7 +13,7 @@ welcome_message() {
   local cyan="\033[36m"
   local yellow="\033[33m"
   local reset="\033[0m"
-  echo -e "${cyan}\n\nWelcome to the installer Pterodactyl by ARYASTORE!${reset}"
+  echo -e "${cyan}\n\nWelcome to the Pterodactyl installer by ARYASTORE!${reset}"
   echo -e "${yellow}This script will guide you through the installation process.${reset}\n"
 }
 
@@ -36,9 +35,6 @@ configure_fail2ban() {
   sudo apt-get install -y fail2ban
 
   echo "Configuring Fail2Ban..."
-  sudo systemctl enable fail2ban
-  sudo systemctl start fail2ban
-
   sudo tee /etc/fail2ban/jail.local > /dev/null <<EOF
 [DEFAULT]
 bantime = 3600
@@ -47,6 +43,8 @@ maxretry = 3
 enabled = true
 EOF
 
+  sudo systemctl enable fail2ban
+  sudo systemctl restart fail2ban
   echo "Fail2Ban configuration complete."
 }
 
@@ -77,7 +75,7 @@ configure_ufw() {
   sudo ufw limit ssh
   sudo ufw default deny incoming
   sudo ufw default allow outgoing
-  sudo ufw enable
+  sudo ufw --force enable
   echo "UFW firewall configured."
 }
 
@@ -86,7 +84,7 @@ configure_ipv6_rate_limiting() {
   echo "Configuring IPv6 Rate-Limiting protection..."
 
   if sysctl net.ipv6.conf.all.disable_ipv6 | grep -q "1"; then
-    echo -e "\033[31mIPv6 is disabled on this system. Skipping IPv6 configuration.\033[0m"
+    echo -e "\033[31mIPv6 is disabled. Skipping configuration.\033[0m"
     return
   fi
 
@@ -97,7 +95,7 @@ configure_ipv6_rate_limiting() {
 # Configure TCP SYN Cookies
 configure_syn_cookies() {
   echo "Configuring TCP SYN Cookies..."
-  sysctl -w net.ipv4.tcp_syncookies=1
+  sudo sysctl -w net.ipv4.tcp_syncookies=1
   echo "net.ipv4.tcp_syncookies=1" | sudo tee -a /etc/sysctl.conf
   sudo sysctl -p
   echo "SYN Cookies protection is enabled."
@@ -109,22 +107,12 @@ configure_sysctl_hardening() {
   sudo tee -a /etc/sysctl.conf > /dev/null <<EOF
 # Prevent SYN flood attacks
 net.ipv4.tcp_syncookies = 1
-
-# Ignore ICMP broadcast requests (prevents Smurf attacks)
 net.ipv4.icmp_echo_ignore_broadcasts = 1
-
-# Ignore bad ICMP errors
 net.ipv4.icmp_ignore_bogus_error_responses = 1
-
-# Enable IP spoofing protection
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
-
-# Disable IPv6 redirects
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.default.accept_redirects = 0
-
-# Disable source routing
 net.ipv4.conf.all.accept_source_route = 0
 net.ipv4.conf.default.accept_source_route = 0
 EOF
@@ -153,37 +141,38 @@ configure_iptables_ddos_protection() {
 
 # Main menu loop
 main_menu() {
-  local done=false
-  while [ "$done" == false ]; do
-    options=(
-      "Install the panel"
-      "Install Wings"
-      "Install both Panel and Wings"
-      "Configure Fail2Ban"
-      "Configure UFW firewall"
-      "Enable TCP SYN Cookies"
-      "Configure IPv6 Rate-Limiting"
-      "Configure Fail2Ban for SSH"
-      "Apply sysctl hardening"
-      "Enable automatic security updates"
-      "Configure IPTables DDoS protection"
-    )
+  local options=(
+    "Install the panel"
+    "Install Wings"
+    "Install both Panel and Wings"
+    "Configure Fail2Ban"
+    "Configure UFW firewall"
+    "Enable TCP SYN Cookies"
+    "Configure IPv6 Rate-Limiting"
+    "Configure Fail2Ban for SSH"
+    "Apply sysctl hardening"
+    "Enable automatic security updates"
+    "Configure IPTables DDoS protection"
+    "Exit"
+  )
 
-    actions=(
-      "panel"
-      "wings"
-      "panel;wings"
-      "configure_fail2ban"
-      "configure_ufw"
-      "configure_syn_cookies"
-      "configure_ipv6_rate_limiting"
-      "configure_fail2ban_ssh"
-      "configure_sysctl_hardening"
-      "enable_auto_security_updates"
-      "configure_iptables_ddos_protection"
-    )
+  local actions=(
+    "install_panel"
+    "install_wings"
+    "install_panel; install_wings"
+    "configure_fail2ban"
+    "configure_ufw"
+    "configure_syn_cookies"
+    "configure_ipv6_rate_limiting"
+    "configure_fail2ban_ssh"
+    "configure_sysctl_hardening"
+    "enable_auto_security_updates"
+    "configure_iptables_ddos_protection"
+    "exit 0"
+  )
 
-    echo -e "\033[36mWhat would you like to do?\033[0m"
+  while true; do
+    echo -e "\033[36mSelect an option:\033[0m"
     for i in "${!options[@]}"; do
       echo -e "[$i] ${options[$i]}"
     done
@@ -191,19 +180,22 @@ main_menu() {
     echo -n "* Input 0-$((${#actions[@]} - 1)): "
     read -r action
 
-    if [[ -z "$action" ]] || [[ ! "$action" =~ ^[0-9]+$ ]] || [[ "$action" -lt 0 || "$action" -ge ${#actions[@]} ]]; then
-      echo -e "\033[31mInvalid input. Please enter a valid option.\033[0m"
-      continue
-    fi
-
-    done=true
-    IFS=";" read -r i1 i2 <<<"${actions[$action]}"
-    if [[ "$i1" =~ configure_.* ]]; then
-      $i1
+    if [[ "$action" =~ ^[0-9]+$ ]] && (( action >= 0 && action < ${#actions[@]} )); then
+      eval "${actions[$action]}"
     else
-      execute "$i1" "$i2"
+      echo -e "\033[31mInvalid input. Please enter a valid option.\033[0m"
     fi
   done
+}
+
+# Install Panel (Placeholder)
+install_panel() {
+  echo "Installing Pterodactyl Panel... (Not implemented)"
+}
+
+# Install Wings (Placeholder)
+install_wings() {
+  echo "Installing Pterodactyl Wings... (Not implemented)"
 }
 
 # Cleanup function
