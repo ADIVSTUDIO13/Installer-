@@ -24,7 +24,6 @@ prompt_password() {
   read -s PASSWORD
   echo
 
-  # Check if password is correct (password is 'aryastore')
   if [[ "$PASSWORD" != "aryastore" ]]; then
     echo -e "\033[31mIncorrect password. Exiting.\033[0m"
     exit 1
@@ -40,75 +39,116 @@ configure_fail2ban() {
   sudo systemctl enable fail2ban
   sudo systemctl start fail2ban
 
-  # Customize Fail2Ban settings (basic configuration)
-  echo "[DEFAULT]" | sudo tee -a /etc/fail2ban/jail.local
-  echo "bantime = 3600" | sudo tee -a /etc/fail2ban/jail.local
-  echo "findtime = 600" | sudo tee -a /etc/fail2ban/jail.local
-  echo "maxretry = 3" | sudo tee -a /etc/fail2ban/jail.local
-  echo "enabled = true" | sudo tee -a /etc/fail2ban/jail.local
+  sudo tee /etc/fail2ban/jail.local > /dev/null <<EOF
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+enabled = true
+EOF
 
   echo "Fail2Ban configuration complete."
 }
 
-# Setup UFW firewall rules to protect from DDoS
+# Configure Fail2Ban for SSH
+configure_fail2ban_ssh() {
+  echo "Configuring Fail2Ban for SSH..."
+  sudo tee /etc/fail2ban/jail.d/ssh.conf > /dev/null <<EOF
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+findtime = 600
+bantime = 3600
+EOF
+
+  sudo systemctl restart fail2ban
+  echo "Fail2Ban SSH protection configured."
+}
+
+# Setup UFW firewall rules
 configure_ufw() {
   echo "Setting up UFW firewall..."
-
-  # Allow basic services (SSH, HTTP, HTTPS)
   sudo ufw allow ssh
   sudo ufw allow http
   sudo ufw allow https
-
-  # Enable rate-limiting for SSH to prevent brute-force attacks
   sudo ufw limit ssh
-
-  # Set default policies to deny incoming traffic and allow outgoing
   sudo ufw default deny incoming
   sudo ufw default allow outgoing
-
-  # Enable UFW
   sudo ufw enable
-
   echo "UFW firewall configured."
 }
 
-# Add Rate-Limiting IPv6 Protection
+# Configure IPv6 Rate-Limiting
 configure_ipv6_rate_limiting() {
   echo "Configuring IPv6 Rate-Limiting protection..."
 
-  # Check if IPv6 is enabled
   if sysctl net.ipv6.conf.all.disable_ipv6 | grep -q "1"; then
-    echo -e "\033[31mIPv6 is disabled on this system. Rate-limiting for IPv6 will not be applied.\033[0m"
+    echo -e "\033[31mIPv6 is disabled on this system. Skipping IPv6 configuration.\033[0m"
     return
   fi
 
-  # Add IPv6 rate-limiting rules in UFW
-  sudo ufw allow proto tcp from any to any port 80,443 comment 'Allow HTTP/HTTPS traffic'
-  sudo ufw allow proto udp from any to any port 80,443 comment 'Allow HTTP/HTTPS traffic'
-  sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit HTTP/HTTPS traffic'
-
-  # Enable UFW rate-limiting for IPv6 (set the maximum new connections per minute)
-  sudo sysctl -w net.ipv6.conf.all.accept_ra=0
-  sudo sysctl -w net.ipv6.conf.default.accept_ra=0
-  sudo sysctl -w net.ipv6.conf.all.rp_filter=1
-  sudo sysctl -w net.ipv6.conf.default.rp_filter=1
-
-  # Add rate limiting to UFW for IPv6
   sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit IPv6 HTTP/HTTPS traffic'
-
   echo "IPv6 Rate-Limiting protection is configured."
 }
 
-# Configure TCP SYN Cookies to protect against SYN Flood attacks
+# Configure TCP SYN Cookies
 configure_syn_cookies() {
   echo "Configuring TCP SYN Cookies..."
-
-  # Check if SYN cookies are enabled, and enable them if not
   sysctl -w net.ipv4.tcp_syncookies=1
   echo "net.ipv4.tcp_syncookies=1" | sudo tee -a /etc/sysctl.conf
   sudo sysctl -p
-
   echo "SYN Cookies protection is enabled."
+}
+
+# Apply sysctl hardening
+configure_sysctl_hardening() {
+  echo "Applying sysctl hardening..."
+  sudo tee -a /etc/sysctl.conf > /dev/null <<EOF
+# Prevent SYN flood attacks
+net.ipv4.tcp_syncookies = 1
+
+# Ignore ICMP broadcast requests (prevents Smurf attacks)
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Ignore bad ICMP errors
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Enable IP spoofing protection
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Disable IPv6 redirects
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Disable source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+EOF
+
+  sudo sysctl -p
+  echo "Sysctl hardening applied."
+}
+
+# Enable automatic security updates
+enable_auto_security_updates() {
+  echo "Enabling automatic security updates..."
+  sudo apt-get install -y unattended-upgrades
+  sudo dpkg-reconfigure -plow unattended-upgrades
+  echo "Automatic security updates enabled."
+}
+
+# Configure IPTables DDoS protection
+configure_iptables_ddos_protection() {
+  echo "Configuring IPTables for DDoS protection..."
+  sudo iptables -A INPUT -p tcp --dport 80 -m connlimit --connlimit-above 50 --connlimit-mask 32 -j REJECT
+  sudo iptables -A INPUT -p tcp --dport 443 -m connlimit --connlimit-above 50 --connlimit-mask 32 -j REJECT
+  sudo iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 5 -j ACCEPT
+  sudo iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+  echo "IPTables DDoS protection applied."
 }
 
 # Main menu loop
@@ -118,11 +158,15 @@ main_menu() {
     options=(
       "Install the panel"
       "Install Wings"
-      "Install both [0] and [1] on the same machine (wings script runs after panel)"
-      "Configure Fail2Ban (Anti-DDoS)"
-      "Configure UFW firewall (Anti-DDoS)"
-      "Enable TCP SYN Cookies (Anti-DDoS)"
-      "Configure IPv6 Rate-Limiting (Anti-DDoS)"
+      "Install both Panel and Wings"
+      "Configure Fail2Ban"
+      "Configure UFW firewall"
+      "Enable TCP SYN Cookies"
+      "Configure IPv6 Rate-Limiting"
+      "Configure Fail2Ban for SSH"
+      "Apply sysctl hardening"
+      "Enable automatic security updates"
+      "Configure IPTables DDoS protection"
     )
 
     actions=(
@@ -133,17 +177,20 @@ main_menu() {
       "configure_ufw"
       "configure_syn_cookies"
       "configure_ipv6_rate_limiting"
+      "configure_fail2ban_ssh"
+      "configure_sysctl_hardening"
+      "enable_auto_security_updates"
+      "configure_iptables_ddos_protection"
     )
 
     echo -e "\033[36mWhat would you like to do?\033[0m"
     for i in "${!options[@]}"; do
-      echo -e "[${yellow}$i${reset}] ${options[$i]}"
+      echo -e "[$i] ${options[$i]}"
     done
 
     echo -n "* Input 0-$((${#actions[@]} - 1)): "
     read -r action
 
-    # Validate input
     if [[ -z "$action" ]] || [[ ! "$action" =~ ^[0-9]+$ ]] || [[ "$action" -lt 0 || "$action" -ge ${#actions[@]} ]]; then
       echo -e "\033[31mInvalid input. Please enter a valid option.\033[0m"
       continue
@@ -151,38 +198,12 @@ main_menu() {
 
     done=true
     IFS=";" read -r i1 i2 <<<"${actions[$action]}"
-    if [[ "$i1" == "configure_fail2ban" ]]; then
-      configure_fail2ban
-    elif [[ "$i1" == "configure_ufw" ]]; then
-      configure_ufw
-    elif [[ "$i1" == "configure_syn_cookies" ]]; then
-      configure_syn_cookies
-    elif [[ "$i1" == "configure_ipv6_rate_limiting" ]]; then
-      configure_ipv6_rate_limiting
+    if [[ "$i1" =~ configure_.* ]]; then
+      $i1
     else
       execute "$i1" "$i2"
     fi
   done
-}
-
-# Install and configure the main components (Pterodactyl Panel and Wings)
-execute() {
-  echo -e "\n\n* pterodactyl-installer $(date)\n\n" >>"$LOG_PATH"
-
-  [[ "$1" == *"canary"* ]] && GITHUB_SOURCE="master" && SCRIPT_RELEASE="canary"
-  update_lib_source
-  run_ui "${1//_canary/}" |& tee -a "$LOG_PATH"
-
-  if [[ -n $2 ]]; then
-    echo -e -n "* Installation of $1 completed. Do you want to proceed with $2 installation? (y/N): "
-    read -r CONFIRM
-    if [[ "$CONFIRM" =~ [Yy] ]]; then
-      execute "$2"
-    else
-      error "Installation of $2 aborted."
-      exit 1
-    fi
-  fi
 }
 
 # Cleanup function
