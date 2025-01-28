@@ -48,24 +48,6 @@ EOF
   echo "Fail2Ban configuration complete."
 }
 
-# Configure Fail2Ban for SSH
-configure_fail2ban_ssh() {
-  echo "Configuring Fail2Ban for SSH..."
-  sudo tee /etc/fail2ban/jail.d/ssh.conf > /dev/null <<EOF
-[sshd]
-enabled = true
-port = ssh
-filter = sshd
-logpath = /var/log/auth.log
-maxretry = 3
-findtime = 600
-bantime = 3600
-EOF
-
-  sudo systemctl restart fail2ban
-  echo "Fail2Ban SSH protection configured."
-}
-
 # Setup UFW firewall rules
 configure_ufw() {
   echo "Setting up UFW firewall..."
@@ -79,20 +61,7 @@ configure_ufw() {
   echo "UFW firewall configured."
 }
 
-# Configure IPv6 Rate-Limiting
-configure_ipv6_rate_limiting() {
-  echo "Configuring IPv6 Rate-Limiting protection..."
-
-  if sysctl net.ipv6.conf.all.disable_ipv6 | grep -q "1"; then
-    echo -e "\033[31mIPv6 is disabled. Skipping configuration.\033[0m"
-    return
-  fi
-
-  sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit IPv6 HTTP/HTTPS traffic'
-  echo "IPv6 Rate-Limiting protection is configured."
-}
-
-# Configure TCP SYN Cookies
+# Enable TCP SYN Cookies
 configure_syn_cookies() {
   echo "Configuring TCP SYN Cookies..."
   sudo sysctl -w net.ipv4.tcp_syncookies=1
@@ -105,16 +74,12 @@ configure_syn_cookies() {
 configure_sysctl_hardening() {
   echo "Applying sysctl hardening..."
   sudo tee -a /etc/sysctl.conf > /dev/null <<EOF
-# Prevent SYN flood attacks
 net.ipv4.tcp_syncookies = 1
 net.ipv4.icmp_echo_ignore_broadcasts = 1
 net.ipv4.icmp_ignore_bogus_error_responses = 1
 net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
 net.ipv6.conf.all.accept_redirects = 0
-net.ipv6.conf.default.accept_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.default.accept_source_route = 0
 EOF
 
   sudo sysctl -p
@@ -139,35 +104,78 @@ configure_iptables_ddos_protection() {
   echo "IPTables DDoS protection applied."
 }
 
-# Main menu loop
+# Send WhatsApp message using browser automation
+send_whatsapp_message() {
+  local phone_number="$1"
+  local message="$2"
+
+  echo "Opening WhatsApp Web..."
+  
+  xdg-open "https://web.whatsapp.com/send?phone=${phone_number}&text=${message}" &
+
+  sleep 10
+
+  echo "Waiting for user confirmation to send the message..."
+  echo -e "\033[33mEnsure you are logged into WhatsApp Web.\033[0m"
+  read -p "Press Enter once you've confirmed the message is ready to send..."
+}
+
+# Monitor server status and send WhatsApp notification
+monitor_server() {
+  local phone_number="$1"
+  local server_ip="$2"
+  local message="Server $server_ip is online and running normally."
+
+  echo "Checking server status..."
+  
+  if ping -c 1 "$server_ip" &> /dev/null; then
+    echo "Server is online."
+    send_whatsapp_message "$phone_number" "$message"
+  else
+    echo "Server is offline!"
+    send_whatsapp_message "$phone_number" "Server $server_ip is down. Please check immediately."
+  fi
+}
+
+# Setup server monitoring
+setup_server_monitoring() {
+  echo -n "Enter the phone number (with country code): "
+  read phone_number
+  echo -n "Enter the server IP to monitor: "
+  read server_ip
+
+  echo "Monitoring server $server_ip and sending updates to $phone_number..."
+  while true; do
+    monitor_server "$phone_number" "$server_ip"
+    sleep 60  # Check server status every minute
+  done
+}
+
+# Main menu
 main_menu() {
   local options=(
     "Install the panel"
     "Install Wings"
-    "Install both Panel and Wings"
     "Configure Fail2Ban"
     "Configure UFW firewall"
     "Enable TCP SYN Cookies"
-    "Configure IPv6 Rate-Limiting"
-    "Configure Fail2Ban for SSH"
     "Apply sysctl hardening"
     "Enable automatic security updates"
     "Configure IPTables DDoS protection"
+    "Monitor server and send WhatsApp message"
     "Exit"
   )
 
   local actions=(
     "install_panel"
     "install_wings"
-    "install_panel; install_wings"
     "configure_fail2ban"
     "configure_ufw"
     "configure_syn_cookies"
-    "configure_ipv6_rate_limiting"
-    "configure_fail2ban_ssh"
     "configure_sysctl_hardening"
     "enable_auto_security_updates"
     "configure_iptables_ddos_protection"
+    "setup_server_monitoring"
     "exit 0"
   )
 
