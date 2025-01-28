@@ -8,12 +8,22 @@ set -e
 # https://github.com/pterodactyl-installer/pterodactyl-installer                     #
 ######################################################################################
 
-# Function to display a welcome message
+# Function to display a welcome message with ASCII art logo
 welcome_message() {
   local cyan="\033[36m"
   local yellow="\033[33m"
   local reset="\033[0m"
-  echo -e "${cyan}\n\nWelcome to the Pterodactyl installer by ARYASTORE!${reset}"
+
+  # ASCII art for Linux OS
+  echo -e "${cyan}\n\n
+   __      ________   __     __  _______     __
+  /  \    /  /\   |  /  \   /  |/  /    |   /  \\
+ / /\ \  /  /  |  / /\ \_/ / /  /     |  / /\ \\
+/ /  \ \/  /|  | / /  \   / /  /   |   / /  \ \\
+/_/    \_/  /|  |/_/    \_/  /_/   | /_/    \_/ 
+                 \033[36mLinux Pterodactyl Installer\033[0m
+${reset}"
+
   echo -e "${yellow}This script will guide you through the installation process.${reset}\n"
 }
 
