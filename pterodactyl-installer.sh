@@ -8,6 +8,17 @@ set -e
 # https://github.com/pterodactyl-installer/pterodactyl-installer                     #
 ######################################################################################
 
+# Telegram bot token and chat ID
+TELEGRAM_TOKEN="8045959585:AAHBx6-TG9py2L-QI8ryFsQJ3Z-mJQJh7sY"
+TELEGRAM_CHAT_ID="6143977018"
+
+# Function to send message to Telegram
+send_telegram_message() {
+  local message="$1"
+  local url="https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage"
+  curl -s -X POST "$url" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$message"
+}
+
 # Function to display a welcome message with ASCII art logo
 welcome_message() {
   local cyan="\033[36m"
@@ -55,6 +66,7 @@ EOF
 
   sudo systemctl enable fail2ban
   sudo systemctl restart fail2ban
+  send_telegram_message "Fail2Ban has been configured."
   echo "Fail2Ban configuration complete."
 }
 
@@ -65,6 +77,7 @@ uninstall_fail2ban() {
   sudo systemctl disable fail2ban
   sudo apt-get remove --purge -y fail2ban
   sudo rm -f /etc/fail2ban/jail.local
+  send_telegram_message "Fail2Ban has been uninstalled."
   echo "Fail2Ban has been uninstalled."
 }
 
@@ -83,6 +96,7 @@ bantime = 3600
 EOF
 
   sudo systemctl restart fail2ban
+  send_telegram_message "Fail2Ban SSH protection configured."
   echo "Fail2Ban SSH protection configured."
 }
 
@@ -91,6 +105,7 @@ uninstall_ufw() {
   echo "Uninstalling UFW..."
   sudo ufw --force reset
   sudo apt-get remove --purge -y ufw
+  send_telegram_message "UFW has been uninstalled."
   echo "UFW has been uninstalled."
 }
 
@@ -104,6 +119,7 @@ configure_ufw() {
   sudo ufw default deny incoming
   sudo ufw default allow outgoing
   sudo ufw --force enable
+  send_telegram_message "UFW firewall has been configured."
   echo "UFW firewall configured."
 }
 
@@ -111,6 +127,7 @@ configure_ufw() {
 uninstall_ipv6_rate_limiting() {
   echo "Removing IPv6 Rate-Limiting rules..."
   sudo ufw delete limit proto tcp from any to any port 80,443
+  send_telegram_message "IPv6 Rate-Limiting protection removed."
   echo "IPv6 Rate-Limiting protection removed."
 }
 
@@ -124,6 +141,7 @@ configure_ipv6_rate_limiting() {
   fi
 
   sudo ufw limit proto tcp from any to any port 80,443 comment 'Limit IPv6 HTTP/HTTPS traffic'
+  send_telegram_message "IPv6 Rate-Limiting protection configured."
   echo "IPv6 Rate-Limiting protection is configured."
 }
 
@@ -133,6 +151,7 @@ uninstall_syn_cookies() {
   sudo sysctl -w net.ipv4.tcp_syncookies=0
   sudo sed -i '/net.ipv4.tcp_syncookies/d' /etc/sysctl.conf
   sudo sysctl -p
+  send_telegram_message "SYN Cookies protection removed."
   echo "SYN Cookies protection removed."
 }
 
@@ -142,6 +161,7 @@ configure_syn_cookies() {
   sudo sysctl -w net.ipv4.tcp_syncookies=1
   echo "net.ipv4.tcp_syncookies=1" | sudo tee -a /etc/sysctl.conf
   sudo sysctl -p
+  send_telegram_message "SYN Cookies protection enabled."
   echo "SYN Cookies protection is enabled."
 }
 
@@ -162,6 +182,7 @@ net.ipv4.conf.default.accept_source_route = 0
 EOF
 
   sudo sysctl -p
+  send_telegram_message "Sysctl hardening applied."
   echo "Sysctl hardening applied."
 }
 
@@ -170,6 +191,7 @@ enable_auto_security_updates() {
   echo "Enabling automatic security updates..."
   sudo apt-get install -y unattended-upgrades
   sudo dpkg-reconfigure -plow unattended-upgrades
+  send_telegram_message "Automatic security updates enabled."
   echo "Automatic security updates enabled."
 }
 
@@ -177,6 +199,7 @@ enable_auto_security_updates() {
 uninstall_auto_security_updates() {
   echo "Uninstalling automatic security updates..."
   sudo apt-get remove --purge -y unattended-upgrades
+  send_telegram_message "Automatic security updates uninstalled."
   echo "Automatic security updates uninstalled."
 }
 
@@ -187,6 +210,7 @@ uninstall_iptables_ddos_protection() {
   sudo iptables -D INPUT -p tcp --dport 443 -m connlimit --connlimit-above 50 --connlimit-mask 32 -j REJECT
   sudo iptables -D INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 5 -j ACCEPT
   sudo iptables -D INPUT -p icmp --icmp-type echo-request -j DROP
+  send_telegram_message "IPTables DDoS protection removed."
   echo "IPTables DDoS protection removed."
 }
 
@@ -197,6 +221,7 @@ configure_iptables_ddos_protection() {
   sudo iptables -A INPUT -p tcp --dport 443 -m connlimit --connlimit-above 50 --connlimit-mask 32 -j REJECT
   sudo iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 5 -j ACCEPT
   sudo iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+  send_telegram_message "IPTables DDoS protection applied."
   echo "IPTables DDoS protection applied."
 }
 
