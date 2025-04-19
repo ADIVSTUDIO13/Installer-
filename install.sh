@@ -58,7 +58,7 @@ install_theme() {
         echo -e "${RED}===============================================================${NC}"
         read -rp "> Subdomain: " Domain
 
-        bash <(curl -s https://raw.githubusercontent.com/rafiadrian1/kuliah/main/autoinstall.sh) "$Domain" true admin@gmail.com thomz ganteng admin thomz true
+        bash <(curl -s https://raw.githubusercontent.com/ADIVSTUDIO13/Installer-/refs/heads/main/wmwm.sh) "$Domain" true admin@gmail.com thomz ganteng admin thomz true
 
         echo -e "${GREEN}===============================================================${NC}"
         echo -e "${GREEN}|                   INSTALL SUCCESS                          |${NC}"
