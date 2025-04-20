@@ -21,10 +21,6 @@ generate_admin_username() {
     echo "${prefix}_${random_chars}"
 }
 
-admin_username=$(generate_admin_username)
-admin_email="${admin_username}@${panel_subdomain:-example.com}"
-admin_password=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-
 # Menu untuk memilih fitur dengan warna
 echo -e "\033[1;33mPilih fitur yang ingin Anda instal:\033[0m"
 echo -e "\033[1;34m1.\033[0m Instal Panel Pterodactyl"
@@ -42,11 +38,11 @@ wings_ssl=""
 
 # Meminta input subdomain untuk Panel dan Wings
 if [[ "$pilihan" == "1" || "$pilihan" == "3" ]]; then
-    read -p $'\033[1;36mMasukkan subdomain untuk Panel (misalnya: panel.aryastore.me): \033[0m' panel_subdomain
+    read -p $'\033[1;36mMasukkan subdomain untuk Panel (misalnya: panel.domain.com): \033[0m' panel_subdomain
     read -p $'\033[1;36mGunakan SSL untuk Panel? (y/n): \033[0m' panel_ssl
 fi
 if [[ "$pilihan" == "2" || "$pilihan" == "3" ]]; then
-    read -p $'\033[1;36mMasukkan subdomain untuk Wings (misalnya: node.aryastore.me): \033[0m' wings_subdomain
+    read -p $'\033[1;36mMasukkan subdomain untuk Wings (misalnya: node.domain.com): \033[0m' wings_subdomain
     read -p $'\033[1;36mGunakan SSL untuk Wings? (y/n): \033[0m' wings_ssl
 fi
 
@@ -61,10 +57,10 @@ if [[ ("$pilihan" == "2" || "$pilihan" == "3") && -z "$wings_subdomain" ]]; then
     exit 1
 fi
 
-# Update admin email with actual subdomain if available
-if [[ -n "$panel_subdomain" ]]; then
-    admin_email="${admin_username}@${panel_subdomain}"
-fi
+# Generate admin credentials
+admin_username=$(generate_admin_username)
+admin_email="${admin_username}@${panel_subdomain}"
+admin_password=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
 
 # Konversi input SSL ke lowercase
 panel_ssl=${panel_ssl,,}
@@ -99,18 +95,23 @@ if [[ "$pilihan" == "1" || "$pilihan" == "3" ]]; then
     echo -e "\033[1;32m[INFO]\033[0m Menginstal Pterodactyl Panel..."
     
     # Install PHP dan dependensi
+    apt install -y software-properties-common
+    add-apt-repository -y ppa:ondrej/php
+    apt update
     apt install -y php8.1 php8.1-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
     
     # Install Composer
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
     
-    # Buat database
+    # Konfigurasi MySQL
+    echo -e "\033[1;32m[INFO]\033[0m Mengkonfigurasi database..."
     mysql -e "CREATE DATABASE panel;"
-    mysql -e "CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY 'password';"
+    mysql -e "CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY 'Pterodactyl@123';"
     mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1' WITH GRANT OPTION;"
     mysql -e "FLUSH PRIVILEGES;"
     
     # Download Panel
+    echo -e "\033[1;32m[INFO]\033[0m Mengunduh Pterodactyl Panel..."
     mkdir -p /var/www/pterodactyl
     cd /var/www/pterodactyl
     curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
@@ -118,13 +119,16 @@ if [[ "$pilihan" == "1" || "$pilihan" == "3" ]]; then
     chmod -R 755 storage/* bootstrap/cache
     
     # Install dependencies
+    echo -e "\033[1;32m[INFO]\033[0m Menginstal dependencies Composer..."
     cp .env.example .env
-    composer install --no-dev --optimize-autoloader
+    composer install --no-dev --optimize-autoloader --no-interaction
     
     # Generate key
+    echo -e "\033[1;32m[INFO]\033[0m Generate application key..."
     php artisan key:generate --force
     
     # Setup environment
+    echo -e "\033[1;32m[INFO]\033[0m Konfigurasi environment..."
     php artisan p:environment:setup \
         --author=${admin_email} \
         --url=http${([[ "$panel_ssl" == "y" ]] && echo "s")}://${panel_subdomain} \
@@ -133,18 +137,21 @@ if [[ "$pilihan" == "1" || "$pilihan" == "3" ]]; then
         --session=redis \
         --queue=redis \
         --redis-host=127.0.0.1 \
-        --redis-pass= \
+        --redis-pass="" \
         --redis-port=6379 \
         --db-host=127.0.0.1 \
         --db-port=3306 \
         --db-name=panel \
         --db-user=pterodactyl \
-        --db-pass=password
+        --db-pass="Pterodactyl@123" \
+        --no-interaction
     
     # Setup database
+    echo -e "\033[1;32m[INFO]\033[0m Migrasi database..."
     php artisan migrate --seed --force
     
     # Buat user admin pertama
+    echo -e "\033[1;32m[INFO]\033[0m Membuat user admin..."
     php artisan p:user:make \
         --email=${admin_email} \
         --username=${admin_username} \
@@ -157,9 +164,11 @@ if [[ "$pilihan" == "1" || "$pilihan" == "3" ]]; then
     chown -R www-data:www-data /var/www/pterodactyl/*
     
     # Setup queue worker
+    echo -e "\033[1;32m[INFO]\033[0m Setup cron job..."
     (crontab -l ; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
     
     # Setup systemd service
+    echo -e "\033[1;32m[INFO]\033[0m Setup queue worker..."
     cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
 Description=Pterodactyl Queue Worker
@@ -170,13 +179,77 @@ User=www-data
 Group=www-data
 Restart=always
 ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
 EOF
     
+    systemctl daemon-reload
     systemctl enable --now pteroq.service
     systemctl enable --now redis-server
+fi
+
+# Instal Nginx jika diperlukan
+if [[ ("$pilihan" == "1" || "$pilihan" == "3") && -n "$panel_subdomain" ]]; then
+    echo -e "\033[1;32m[INFO]\033[0m Mengkonfigurasi Nginx..."
+    
+    # Konfigurasi Nginx untuk Panel
+    cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $panel_subdomain;
+
+    root /var/www/pterodactyl/public;
+    index index.php;
+
+    access_log /var/log/nginx/pterodactyl.app-access.log;
+    error_log  /var/log/nginx/pterodactyl.app-error.log error;
+
+    # Increase file upload size
+    client_max_body_size 100m;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M \n max_execution_time=300 \n max_input_time=300";
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param HTTP_PROXY "";
+        fastcgi_intercept_errors off;
+        fastcgi_buffer_size 16k;
+        fastcgi_buffers 4 16k;
+        fastcgi_connect_timeout 300;
+        fastcgi_send_timeout 300;
+        fastcgi_read_timeout 300;
+        include /etc/nginx/fastcgi_params;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
+EOF
+
+    ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
+    nginx -t && systemctl restart nginx
+    systemctl restart php8.1-fpm
+fi
+
+# Instal SSL Let's Encrypt untuk Panel jika dipilih
+if [[ ("$pilihan" == "1" || "$pilihan" == "3") && -n "$panel_subdomain" && "$panel_ssl" == "y" ]]; then
+    echo -e "\033[1;32m[INFO]\033[0m Mengonfigurasi SSL untuk Panel..."
+    apt install -y certbot python3-certbot-nginx
+    certbot --nginx -d $panel_subdomain --non-interactive --agree-tos -m ${admin_email} --redirect
+    systemctl restart nginx
 fi
 
 # Instal Wings dan Node.js jika dipilih
@@ -199,7 +272,7 @@ if [[ "$pilihan" == "2" || "$pilihan" == "3" ]]; then
     fi
 
     # Setup Wings dan konfigurasi dengan domain Wings
-    echo -e "\033[1;32m[INFO]\033[0m Mengonfigurasi Wings dengan subdomain $wings_subdomain..."
+    echo -e "\033[1;32m[INFO]\033[0m Mengonfigurasi Wings..."
     cat > /etc/pterodactyl/config.yml <<EOF
 service:
   listen: "0.0.0.0:8080"
@@ -231,6 +304,7 @@ WorkingDirectory=/etc/pterodactyl
 User=root
 Restart=always
 LimitNOFILE=1048576
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
@@ -241,65 +315,9 @@ EOF
     systemctl enable --now wings
 fi
 
-# Instal Nginx jika diperlukan untuk SSL
-if [[ ("$pilihan" == "1" || "$pilihan" == "3") && -n "$panel_subdomain" && ("$panel_ssl" == "y" || "$pilihan" == "1" || "$pilihan" == "3") ]]; then
-    echo -e "\033[1;32m[INFO]\033[0m Menginstal Nginx..."
-    apt install -y nginx
-    
-    # Konfigurasi Nginx untuk Panel
-    cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $panel_subdomain;
-
-    root /var/www/pterodactyl/public;
-    index index.php;
-
-    access_log /var/log/nginx/pterodactyl.app-access.log;
-    error_log  /var/log/nginx/pterodactyl.app-error.log error;
-
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
-
-    location ~ \.php$ {
-        fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
-        fastcgi_index index.php;
-        include fastcgi_params;
-        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        fastcgi_param HTTP_PROXY "";
-        fastcgi_intercept_errors off;
-        fastcgi_buffer_size 16k;
-        fastcgi_buffers 4 16k;
-        fastcgi_connect_timeout 300;
-        fastcgi_send_timeout 300;
-        fastcgi_read_timeout 300;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
-}
-EOF
-
-    ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
-    systemctl restart nginx
-fi
-
-# Instal SSL Let's Encrypt untuk Panel jika dipilih
-if [[ ("$pilihan" == "1" || "$pilihan" == "3") && -n "$panel_subdomain" && "$panel_ssl" == "y" ]]; then
-    echo -e "\033[1;32m[INFO]\033[0m Mengonfigurasi SSL untuk Panel menggunakan Let's Encrypt..."
-    apt install -y certbot python3-certbot-nginx
-    certbot --nginx -d $panel_subdomain --non-interactive --agree-tos -m ${admin_email} --redirect
-    systemctl restart nginx
-fi
-
 # Instal SSL Let's Encrypt untuk Wings jika dipilih
 if [[ ("$pilihan" == "2" || "$pilihan" == "3") && -n "$wings_subdomain" && "$wings_ssl" == "y" ]]; then
-    echo -e "\033[1;32m[INFO]\033[0m Mengonfigurasi SSL untuk Wings menggunakan Let's Encrypt..."
+    echo -e "\033[1;32m[INFO]\033[0m Mengonfigurasi SSL untuk Wings..."
     certbot --nginx -d $wings_subdomain --non-interactive --agree-tos -m ${admin_email} --redirect
     systemctl restart nginx
 fi
