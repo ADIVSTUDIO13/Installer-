@@ -94,14 +94,20 @@ fi
 if [[ "$pilihan" == "1" || "$pilihan" == "3" ]]; then
     echo -e "\033[1;32m[INFO]\033[0m Menginstal Pterodactyl Panel..."
     
-    # Install PHP dan dependensi
+    # Install PHP 8.2 dan dependensi
+    echo -e "\033[1;32m[INFO]\033[0m Menginstal PHP 8.2 dan ekstensi yang diperlukan..."
     apt install -y software-properties-common
     add-apt-repository -y ppa:ondrej/php
     apt update
-    apt install -y php8.1 php8.1-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
+    apt install -y php8.2 php8.2-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip,bz2,ldap,opcache,intl}
     
     # Install Composer
-    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    echo -e "\033[1;32m[INFO]\033[0m Menginstal Composer..."
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer --version=2.6.5
+    
+    # Install dependensi lain
+    echo -e "\033[1;32m[INFO]\033[0m Menginstal dependensi server..."
+    apt install -y mariadb-server nginx tar unzip git redis-server
     
     # Konfigurasi MySQL
     echo -e "\033[1;32m[INFO]\033[0m Mengkonfigurasi database..."
@@ -218,7 +224,7 @@ server {
 
     location ~ \.php$ {
         fastcgi_split_path_info ^(.+\.php)(/.+)$;
-        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M \n max_execution_time=300 \n max_input_time=300";
@@ -241,7 +247,7 @@ EOF
 
     ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
     nginx -t && systemctl restart nginx
-    systemctl restart php8.1-fpm
+    systemctl restart php8.2-fpm
 fi
 
 # Instal SSL Let's Encrypt untuk Panel jika dipilih
