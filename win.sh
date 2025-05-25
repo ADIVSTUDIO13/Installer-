@@ -27,6 +27,21 @@ install_docker() {
     fi
 }
 
+# Fungsi untuk menginstal docker-compose (V1) jika belum terinstal
+install_docker_compose() {
+    if ! command_exists docker-compose; then
+        echo "docker-compose tidak ditemukan. Menginstal docker-compose..."
+        curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+        if ! command_exists docker-compose; then
+            echo "Gagal menginstal docker-compose. Pastikan curl tersedia dan coba lagi."
+            exit 1
+        fi
+    else
+        echo "docker-compose sudah terinstal."
+    fi
+}
+
 # Fungsi untuk menampilkan menu pemilihan versi Windows
 select_windows_version() {
     echo "Pilih versi Windows yang ingin diinstal:"
@@ -106,6 +121,7 @@ main() {
 
     # Instal dependensi
     install_docker
+    install_docker_compose
 
     # Pilih versi Windows
     select_windows_version
