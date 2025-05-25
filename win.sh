@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script untuk menginstal dan menjalankan dockur/windows di Docker dengan pilihan versi Windows dan akses VNC
+# Script untuk menginstal Docker, Docker Compose, dan menjalankan dockur/windows dengan pilihan versi Windows dan akses VNC
 
 # Warna untuk output
 RED='\033[0;31m'
@@ -12,16 +12,32 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Memeriksa dependensi
-echo "Memeriksa dependensi..."
+# Memeriksa dan menginstal Docker jika belum ada
+echo "Memeriksa Docker..."
 if ! command_exists docker; then
-    echo -e "${RED}Docker tidak ditemukan. Silakan instal Docker terlebih dahulu.${NC}"
-    exit 1
+    echo "Docker tidak ditemukan. Menginstal Docker..."
+    sudo apt update
+    sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+    sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+    sudo apt update
+    sudo apt install -y docker-ce
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    echo -e "${GREEN}Docker berhasil diinstal.${NC}"
+else
+    echo -e "${GREEN}Docker sudah terinstal.${NC}"
 fi
 
+# Memeriksa dan menginstal Docker Compose jika belum ada
+echo "Memeriksa Docker Compose..."
 if ! command_exists docker-compose; then
-    echo -e "${RED}Docker Compose tidak ditemukan. Silakan instal Docker Compose terlebih dahulu.${NC}"
-    exit 1
+    echo "Docker Compose tidak ditemukan. Menginstal Docker Compose..."
+    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+    echo -e "${GREEN}Docker Compose berhasil diinstal.${NC}"
+else
+    echo -e "${GREEN}Docker Compose sudah terinstal.${NC}"
 fi
 
 # Memeriksa KVM
