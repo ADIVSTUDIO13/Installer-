@@ -1,100 +1,85 @@
 #!/bin/bash
 
-# Script untuk menginstal Windows dalam Docker container menggunakan dockur/windows
-# Berdasarkan: https://github.com/dockur/windows
-# Versi tanpa KVM untuk VPS yang tidak mendukung virtualisasi KVM
-# Pastikan script ini dijalankan dengan hak akses root (sudo)
+# Script untuk menginstal dan menjalankan dockur/windows di Docker dengan pilihan versi Windows dan akses VNC
+
+# Warna untuk output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
 
 # Fungsi untuk memeriksa apakah perintah tersedia
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Fungsi untuk menginstal Docker jika belum terinstal
-install_docker() {
-    if ! command_exists docker; then
-        echo "Docker tidak ditemukan. Menginstal Docker..."
-        apt-get update
-        apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
-        add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io
-        systemctl start docker
-        systemctl enable docker
-    else
-        echo "Docker sudah terinstal."
-    fi
-}
+# Memeriksa dependensi
+echo "Memeriksa dependensi..."
+if ! command_exists docker; then
+    echo -e "${RED}Docker tidak ditemukan. Silakan instal Docker terlebih dahulu.${NC}"
+    exit 1
+fi
 
-# Fungsi untuk menginstal docker-compose (V1) jika belum terinstal
-install_docker_compose() {
-    if ! command_exists docker-compose; then
-        echo "docker-compose tidak ditemukan. Menginstal docker-compose..."
-        curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
-        if ! command_exists docker-compose; then
-            echo "Gagal menginstal docker-compose. Pastikan curl tersedia dan coba lagi."
-            exit 1
-        fi
-    else
-        echo "docker-compose sudah terinstal."
-    fi
-}
+if ! command_exists docker-compose; then
+    echo -e "${RED}Docker Compose tidak ditemukan. Silakan instal Docker Compose terlebih dahulu.${NC}"
+    exit 1
+fi
 
-# Fungsi untuk menampilkan menu pemilihan versi Windows
-select_windows_version() {
-    echo "Pilih versi Windows yang ingin diinstal:"
-    echo "1. Windows 11 Pro (default)"
-    echo "2. Windows 10 Pro"
-    echo "3. Windows Server 2022"
-    echo "4. Windows Server 2019"
-    echo "5. Masukkan versi kustom (contoh: win10, win11, 2022)"
-    read -p "Masukkan pilihan (1-5): " choice
+# Memeriksa KVM
+if ! command_exists kvm-ok; then
+    echo "Menginstal cpu-checker untuk memeriksa KVM..."
+    sudo apt update && sudo apt install -y cpu-checker
+fi
 
-    case $choice in
-        1) VERSION="11" ;;
-        2) VERSION="10" ;;
-        3) VERSION="2022" ;;
-        4) VERSION="2019" ;;
-        5) read -p "Masukkan versi Windows (contoh: win10, win11, 2022): " VERSION ;;
-        *) echo "Pilihan tidak valid, menggunakan Windows 11 Pro sebagai default." ; VERSION="11" ;;
-    esac
-}
+echo "Memeriksa dukungan KVM..."
+if ! sudo kvm-ok; then
+    echo -e "${RED}KVM tidak didukung atau tidak diaktifkan. Periksa BIOS (Intel VT-x/AMD SVM) atau pastikan Anda tidak menggunakan Docker Desktop untuk Linux.${NC}"
+    exit 1
+fi
 
-# Fungsi untuk mengatur konfigurasi tambahan
-configure_settings() {
-    read -p "Masukkan ukuran RAM (default: 4G, contoh: 8G): " RAM_SIZE
-    RAM_SIZE=${RAM_SIZE:-4G}
-    read -p "Masukkan jumlah CPU cores (default: 2, contoh: 4): " CPU_CORES
-    CPU_CORES=${CPU_CORES:-2}
-    read -p "Masukkan ukuran disk (default: 64G, contoh: 128G): " DISK_SIZE
-    DISK_SIZE=${DISK_SIZE:-64G}
-    read -p "Masukkan bahasa (default: en-US, contoh: fr-FR, de-DE): " LANGUAGE
-    LANGUAGE=${LANGUAGE:-en-US}
-    read -p "Masukkan nama pengguna (default: Docker): " USERNAME
-    USERNAME=${USERNAME:-Docker}
-    read -p "Masukkan kata sandi (default: admin): " PASSWORD
-    PASSWORD=${PASSWORD:-admin}
-}
+# Meminta pengguna memilih versi Windows
+echo "Pilih versi Windows yang ingin diinstal:"
+echo "1. Windows 11 Pro"
+echo "2. Windows 10 Pro"
+echo "3. Windows Server 2022"
+echo "4. Masukkan URL ISO khusus (contoh: tiny11)"
+read -p "Masukkan nomor pilihan (1-4): " choice
 
-# Fungsi untuk membuat docker-compose.yml
-create_docker_compose() {
-    cat > docker-compose.yml <<EOL
-version: '3.8'
+case $choice in
+    1)
+        VERSION="11"
+        ;;
+    2)
+        VERSION="10"
+        ;;
+    3)
+        VERSION="2022"
+        ;;
+    4)
+        read -p "Masukkan URL ISO khusus: " custom_url
+        VERSION="$custom_url"
+        ;;
+    *)
+        echo -e "${RED}Pilihan tidak valid. Menggunakan default: Windows 11 Pro.${NC}"
+        VERSION="11"
+        ;;
+esac
+
+# Membuat direktori untuk storage
+echo "Membuat direktori untuk storage..."
+mkdir -p ./windows
+
+# Membuat file docker-compose.yml dengan dukungan VNC
+echo "Membuat konfigurasi Docker Compose..."
+cat > docker-compose.yml << EOL
 services:
   windows:
     image: dockurr/windows
     container_name: windows
     environment:
-      VERSION: "${VERSION}"
-      RAM_SIZE: "${RAM_SIZE}"
-      CPU_CORES: "${CPU_CORES}"
-      DISK_SIZE: "${DISK_SIZE}"
-      LANGUAGE: "${LANGUAGE}"
-      USERNAME: "${USERNAME}"
-      PASSWORD: "${PASSWORD}"
+      VERSION: "$VERSION"
+      VNC_ENABLED: "true"
     devices:
+      - /dev/kvm
       - /dev/net/tun
     cap_add:
       - NET_ADMIN
@@ -102,45 +87,25 @@ services:
       - 8006:8006
       - 3389:3389/tcp
       - 3389:3389/udp
+      - 5900:5900
     volumes:
       - ./windows:/storage
+    restart: always
     stop_grace_period: 2m
-    privileged: true
 EOL
-}
 
-# Fungsi utama
-main() {
-    # Pastikan dijalankan sebagai root
-    if [ "$EUID" -ne 0 ]; then
-        echo "Script ini harus dijalankan sebagai root (gunakan sudo)."
-        exit 1
-    fi
+# Menjalankan Docker container
+echo "Menjalankan container Windows..."
+docker-compose up -d
 
-    echo "Memulai instalasi Windows dalam Docker container..."
+# Menampilkan instruksi
+echo -e "${GREEN}Instalasi selesai!${NC}"
+echo "1. Buka browser Anda dan akses http://localhost:8006 untuk melihat proses instalasi."
+echo "2. Untuk akses via VNC, gunakan VNC client (contoh: VNC Viewer) ke localhost:5900."
+echo "3. Untuk akses via RDP, gunakan port 3389 (contoh: 192.168.0.2:3389)."
+echo "4. Tunggu hingga desktop Windows muncul (proses otomatis)."
+echo "5. Folder storage ada di $(pwd)/windows."
+echo "6. Untuk menghentikan container, jalankan: docker-compose down"
+echo -e "${GREEN}Jangan lupa beri bintang di repo: https://github.com/dockur/windows${NC}"
 
-    # Instal dependensi
-    install_docker
-    install_docker_compose
-
-    # Pilih versi Windows
-    select_windows_version
-
-    # Konfigurasi pengaturan
-    configure_settings
-
-    # Buat file docker-compose.yml
-    create_docker_compose
-
-    # Jalankan container
-    echo "Memulai container Windows..."
-    docker-compose up -d
-
-    echo "Container Windows telah dimulai. Akses melalui browser di http://<IP_VPS>:8006"
-    echo "Untuk pengalaman lebih baik, gunakan Microsoft Remote Desktop dengan IP VPS, username: ${USERNAME}, password: ${PASSWORD}"
-    echo "Catatan: Instalasi akan berjalan otomatis. Tunggu hingga desktop muncul."
-    echo "Jangan lupa untuk memberikan star pada repo: https://github.com/dockur/windows"
-}
-
-# Jalankan fungsi utama
-main
+exit 0
