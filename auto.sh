@@ -12,15 +12,6 @@ mkdir -p "$LOGDIR"
 
 LOGFILE="$LOGDIR/monitor_$(date +%Y-%m-%d_%H-%M-%S).log"
 
-# === Lockfile untuk mencegah duplikasi ===
-LOCKFILE="/tmp/auto_monitor.lock"
-if [ -f "$LOCKFILE" ]; then
-    echo -e "${RED}Script is already running. Exiting.${NC}" | tee -a "$LOGFILE"
-    exit 1
-fi
-touch "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"; exit' EXIT INT TERM
-
 # === Warna CLI ===
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[1;34m'; NC='\033[0m'
 
@@ -32,23 +23,18 @@ section() { hr; print "${YELLOW}$1${NC}"; hr; }
 deps=(curl jq lscpu ip speedtest-cli dig dmidecode ss top df free nc)
 for tool in "${deps[@]}"; do
     if ! command -v $tool &> /dev/null; then
-        print "${YELLOW}Installing $tool...${NC}"
+        echo -e "${YELLOW}Installing $tool...${NC}"
         apt install -y $tool 2>/dev/null || yum install -y $tool 2>/dev/null
     fi
 done
 
-# === Install Node.js dan PM2 jika belum ada ===
+# === Install Node.js jika belum ada ===
 if [ "$WEB_PANEL_ENABLE" = true ] && ! command -v node &> /dev/null; then
     section "📦 INSTALL NODE.JS"
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
     apt-get install -y nodejs
     npm install -g npm
     print "${GREEN}Node.js installed successfully${NC}"
-    if ! command -v pm2 &> /dev/null; then
-        print "${YELLOW}Installing PM2...${NC}"
-        npm install -g pm2
-        print "${GREEN}PM2 installed successfully${NC}"
-    fi
 fi
 
 clear
@@ -71,11 +57,7 @@ print "IP Publik      : $IP"
 print "Lokasi Server  : $LOC"
 
 section "🌐 TES KECEPATAN INTERNET"
-if [ $(date +%H) -eq 0 ] || [ $(date +%H) -eq 6 ] || [ $(date +%H) -eq 12 ] || [ $(date +%H) -eq 18 ]; then
-    speedtest-cli --simple | tee -a "$LOGFILE"
-else
-    print "${YELLOW}Speedtest skipped (runs every 6 hours)${NC}"
-fi
+speedtest-cli --simple | tee -a "$LOGFILE"
 
 section "📶 PING SERVER PENTING"
 for host in google.com cloudflare.com openai.com github.com; do
@@ -154,7 +136,7 @@ if [ "$WEB_PANEL_ENABLE" = true ]; then
 }
 EOL
 
-    # Create server.js
+    # Create server.js with FIXED template literals
     cat > "$WEB_PANEL_DIR/server.js" <<'EOL'
 const express = require('express');
 const fs = require('fs-extra');
@@ -378,19 +360,16 @@ setupPublic().then(() => {
 });
 EOL
 
-    # Install dependencies and start web panel with PM2
+    # Install dependencies and start web panel
     cd "$WEB_PANEL_DIR"
     npm install
     
-    # Check if web panel is already managed by PM2
-    if ! pm2 list | grep -q "server-monitor"; then
-        pm2 start server.js --name server-monitor
-        pm2 save
-        pm2 startup | grep "sudo" | bash
-        print "${GREEN}Web panel started with PM2 on port $WEB_PANEL_PORT${NC}"
+    # Check if web panel is already running
+    if ! pgrep -f "node.*server.js" > /dev/null; then
+        nohup node server.js > "$WEB_PANEL_DIR/server.log" 2>&1 &
+        print "${GREEN}Web panel started on port $WEB_PANEL_PORT${NC}"
     else
-        pm2 restart server-monitor
-        print "${YELLOW}Web panel restarted with PM2${NC}"
+        print "${YELLOW}Web panel is already running${NC}"
     fi
     
     # Check firewall
@@ -398,19 +377,6 @@ EOL
         if ! ufw status | grep -q "$WEB_PANEL_PORT/tcp"; then
             ufw allow "$WEB_PANEL_PORT/tcp"
             print "${GREEN}Firewall rule added for port $WEB_PANEL_PORT${NC}"
-        fi
-    fi
-    
-    # Health check for web panel
-    sleep 5
-    if curl -s -f "http://127.0.0.1:$WEB_PANEL_PORT" > /dev/null; then
-        print "${GREEN}Web panel is running successfully${NC}"
-    else
-        print "${RED}Web panel failed to start. Check $WEB_PANEL_DIR/server.log${NC}"
-        if [ "$KIRIM_TELEGRAM" = true ]; then
-            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-                 -d chat_id="$TELEGRAM_CHAT_ID" \
-                 -d text="🚨 Web panel failed to start on $(hostname)!" > /dev/null
         fi
     fi
     
@@ -431,19 +397,6 @@ else
     print "${YELLOW}Cronjob already exists at $CRON_FILE${NC}"
 fi
 
-# Ensure cron service is running
-if command -v systemctl &> /dev/null; then
-    if ! systemctl is-active --quiet cron; then
-        systemctl start cron
-        systemctl enable cron
-        print "${GREEN}Cron service started and enabled${NC}"
-    fi
-fi
-
-section "🧹 CLEANUP OLD LOGS"
-find "$LOGDIR" -type f -name "*.log" -mtime +7 -delete
-print "${GREEN}Logs older than 7 days deleted${NC}"
-
 section "📤 KIRIM LAPORAN (TELEGRAM)"
 if [ "$KIRIM_TELEGRAM" = true ]; then
     if curl -s -F chat_id="$TELEGRAM_CHAT_ID" \
@@ -454,10 +407,6 @@ if [ "$KIRIM_TELEGRAM" = true ]; then
     else
         print "${RED}❌ Gagal mengirim laporan ke Telegram.${NC}"
     fi
-    # Send success notification
-    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-         -d chat_id="$TELEGRAM_CHAT_ID" \
-         -d text="✅ Monitoring completed successfully on $(hostname) at $(date)" > /dev/null
 else
     print "${YELLOW}Laporan TIDAK dikirim (KIRIM_TELEGRAM=false)${NC}"
 fi
@@ -468,6 +417,6 @@ print "Log disimpan di: ${GREEN}$LOGFILE${NC}"
 if [ "$WEB_PANEL_ENABLE" = true ]; then
     print "Web panel berjalan di port: ${GREEN}$WEB_PANEL_PORT${NC}"
     print "Akses dashboard di: ${GREEN}http://$IP:$WEB_PANEL_PORT${NC}"
-    print "Untuk menghentikan web panel: ${RED}pm2 stop server-monitor${NC}"
-    print "Untuk melihat log web panel: ${YELLOW}pm2 logs server-monitor${NC}"
+    print "Untuk menghentikan web panel: ${RED}kill \$(pgrep -f 'node.*server.js')${NC}"
+    print "Untuk melihat log web panel: ${YELLOW}cat /opt/server-monitor/server.log${NC}"
 fi
