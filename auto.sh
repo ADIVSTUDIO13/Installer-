@@ -12,6 +12,15 @@ mkdir -p "$LOGDIR"
 
 LOGFILE="$LOGDIR/monitor_$(date +%Y-%m-%d_%H-%M-%S).log"
 
+# === Lockfile untuk mencegah duplikasi ===
+LOCKFILE="/tmp/auto_monitor.lock"
+if [ -f "$LOCKFILE" ]; then
+    echo -e "${RED}Script is already running. Exiting.${NC}" | tee -a "$LOGFILE"
+    exit 1
+fi
+touch "$LOCKFILE"
+trap 'rm -f "$LOCKFILE"; exit' EXIT INT TERM
+
 # === Warna CLI ===
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[1;34m'; NC='\033[0m'
 
@@ -23,17 +32,23 @@ section() { hr; print "${YELLOW}$1${NC}"; hr; }
 deps=(curl jq lscpu ip speedtest-cli dig dmidecode ss top df free nc)
 for tool in "${deps[@]}"; do
     if ! command -v $tool &> /dev/null; then
-        echo -e "${YELLOW}Installing $tool...${NC}"
+        print "${YELLOW}Installing $tool...${NC}"
         apt install -y $tool 2>/dev/null || yum install -y $tool 2>/dev/null
     fi
 done
 
-# === Install Node.js jika belum ada ===
+# === Install Node.js dan PM2 jika belum ada ===
 if [ "$WEB_PANEL_ENABLE" = true ] && ! command -v node &> /dev/null; then
     section "📦 INSTALL NODE.JS"
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
     apt-get install -y nodejs
+    npm install -g npm
     print "${GREEN}Node.js installed successfully${NC}"
+    if ! command -v pm2 &> /dev/null; then
+        print "${YELLOW}Installing PM2...${NC}"
+        npm install -g pm2
+        print "${GREEN}PM2 installed successfully${NC}"
+    fi
 fi
 
 clear
@@ -56,7 +71,11 @@ print "IP Publik      : $IP"
 print "Lokasi Server  : $LOC"
 
 section "🌐 TES KECEPATAN INTERNET"
-speedtest-cli --simple | tee -a "$LOGFILE"
+if [ $(date +%H) -eq 0 ] || [ $(date +%H) -eq 6 ] || [ $(date +%H) -eq 12 ] || [ $(date +%H) -eq 18 ]; then
+    speedtest-cli --simple | tee -a "$LOGFILE"
+else
+    print "${YELLOW}Speedtest skipped (runs every 6 hours)${NC}"
+fi
 
 section "📶 PING SERVER PENTING"
 for host in google.com cloudflare.com openai.com github.com; do
@@ -136,7 +155,7 @@ if [ "$WEB_PANEL_ENABLE" = true ]; then
 EOL
 
     # Create server.js
-    cat > "$WEB_PANEL_DIR/server.js" <<EOL
+    cat > "$WEB_PANEL_DIR/server.js" <<'EOL'
 const express = require('express');
 const fs = require('fs-extra');
 const path = require('path');
@@ -190,14 +209,13 @@ async function setupPublic() {
     await fs.ensureDir(publicDir);
 
     // Create index.html
-    const indexHtml = \`<!DOCTYPE html>
+    const indexHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Server Monitor Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.css">
     <style>
         .log-content {
             background-color: #f8f9fa;
@@ -298,7 +316,7 @@ async function setupPublic() {
         
         // Load log content
         function loadLog(filename) {
-            fetch(\`/api/log/\${filename}\`)
+            fetch('/api/log/' + filename)
                 .then(response => response.text())
                 .then(content => {
                     document.getElementById('log-content').textContent = content;
@@ -317,7 +335,7 @@ async function setupPublic() {
         socket.emit('get_server_info');
     </script>
 </body>
-</html>\`;
+</html>`;
     
     await fs.writeFile(path.join(publicDir, 'index.html'), indexHtml);
 }
@@ -330,26 +348,28 @@ setupPublic().then(() => {
     execSync('npm install', { cwd: __dirname, stdio: 'inherit' });
 
     // Start server
-    http.listen($WEB_PANEL_PORT, () => {
-        console.log(\`Server running on port $WEB_PANEL_PORT\`);
+    const PORT = process.env.PORT || 3000;
+    http.listen(PORT, '0.0.0.0', () => {
+        console.log('Server running on http://0.0.0.0:' + PORT);
     });
 
     // Real-time updates
     setInterval(() => {
-        const hostname = require('os').hostname();
-        const uptime = require('os').uptime();
-        const loadavg = require('os').loadavg();
+        const os = require('os');
+        const hostname = os.hostname();
+        const uptime = os.uptime();
+        const loadavg = os.loadavg();
         
-        // Get public IP (simplified for demo)
-        let ip = 'N/A';
-        try {
-            ip = require('child_process').execSync('curl -s ifconfig.me').toString().trim();
-        } catch (e) {}
+        // Format uptime
+        const days = Math.floor(uptime / 86400);
+        const hours = Math.floor((uptime % 86400) / 3600);
+        const minutes = Math.floor((uptime % 3600) / 60);
+        const uptimeStr = days + 'd ' + hours + 'h ' + minutes + 'm';
         
         io.emit('server_update', {
-            hostname,
-            ip,
-            uptime: \`\${Math.floor(uptime / 3600)}h \${Math.floor((uptime % 3600) / 60)}m\`,
+            hostname: hostname,
+            ip: process.env.SERVER_IP || 'N/A',
+            uptime: uptimeStr,
             loadavg: loadavg.map(v => v.toFixed(2)).join(', ')
         });
     }, 5000);
@@ -358,35 +378,86 @@ setupPublic().then(() => {
 });
 EOL
 
-    # Install dependencies and start web panel
+    # Install dependencies and start web panel with PM2
     cd "$WEB_PANEL_DIR"
     npm install
-    nohup node server.js > "$WEB_PANEL_DIR/server.log" 2>&1 &
     
-    print "${GREEN}Web panel started on port $WEB_PANEL_PORT${NC}"
-    print "Access the dashboard at: ${GREEN}http://your-server-ip:$WEB_PANEL_PORT${NC}"
+    # Check if web panel is already managed by PM2
+    if ! pm2 list | grep -q "server-monitor"; then
+        pm2 start server.js --name server-monitor
+        pm2 save
+        pm2 startup | grep "sudo" | bash
+        print "${GREEN}Web panel started with PM2 on port $WEB_PANEL_PORT${NC}"
+    else
+        pm2 restart server-monitor
+        print "${YELLOW}Web panel restarted with PM2${NC}"
+    fi
+    
+    # Check firewall
+    if command -v ufw &> /dev/null; then
+        if ! ufw status | grep -q "$WEB_PANEL_PORT/tcp"; then
+            ufw allow "$WEB_PANEL_PORT/tcp"
+            print "${GREEN}Firewall rule added for port $WEB_PANEL_PORT${NC}"
+        fi
+    fi
+    
+    # Health check for web panel
+    sleep 5
+    if curl -s -f "http://127.0.0.1:$WEB_PANEL_PORT" > /dev/null; then
+        print "${GREEN}Web panel is running successfully${NC}"
+    else
+        print "${RED}Web panel failed to start. Check $WEB_PANEL_DIR/server.log${NC}"
+        if [ "$KIRIM_TELEGRAM" = true ]; then
+            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+                 -d chat_id="$TELEGRAM_CHAT_ID" \
+                 -d text="🚨 Web panel failed to start on $(hostname)!" > /dev/null
+        fi
+    fi
+    
+    print "Access the dashboard at: ${GREEN}http://$IP:$WEB_PANEL_PORT${NC}"
 else
     print "${YELLOW}Web panel is disabled (WEB_PANEL_ENABLE=false)${NC}"
 fi
 
 section "⏰ SETUP CRONJOB"
-CRON_JOB="0 * * * * root /bin/bash $(realpath $0)"
+CRON_JOB="0 * * * * root $(realpath "$0")"
 CRON_FILE="/etc/cron.d/server_monitor"
 
-if [ ! -f "$CRON_FILE" ]; then
+if [ ! -f "$CRON_FILE" ] || ! grep -q "$(realpath "$0")" "$CRON_FILE"; then
     echo "$CRON_JOB" | sudo tee "$CRON_FILE" > /dev/null
+    sudo chmod 644 "$CRON_FILE"
     print "${GREEN}Cronjob created to run hourly at $CRON_FILE${NC}"
 else
     print "${YELLOW}Cronjob already exists at $CRON_FILE${NC}"
 fi
 
+# Ensure cron service is running
+if command -v systemctl &> /dev/null; then
+    if ! systemctl is-active --quiet cron; then
+        systemctl start cron
+        systemctl enable cron
+        print "${GREEN}Cron service started and enabled${NC}"
+    fi
+fi
+
+section "🧹 CLEANUP OLD LOGS"
+find "$LOGDIR" -type f -name "*.log" -mtime +7 -delete
+print "${GREEN}Logs older than 7 days deleted${NC}"
+
 section "📤 KIRIM LAPORAN (TELEGRAM)"
 if [ "$KIRIM_TELEGRAM" = true ]; then
-    curl -s -F chat_id="$TELEGRAM_CHAT_ID" \
+    if curl -s -F chat_id="$TELEGRAM_CHAT_ID" \
          -F document=@"$LOGFILE" \
          -F caption="📊 Laporan Monitoring: $(date)" \
-         "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument" >/dev/null
-    print "${GREEN}✅ Laporan berhasil dikirim ke Telegram.${NC}"
+         "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument" >/dev/null; then
+        print "${GREEN}✅ Laporan berhasil dikirim ke Telegram.${NC}"
+    else
+        print "${RED}❌ Gagal mengirim laporan ke Telegram.${NC}"
+    fi
+    # Send success notification
+    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+         -d chat_id="$TELEGRAM_CHAT_ID" \
+         -d text="✅ Monitoring completed successfully on $(hostname) at $(date)" > /dev/null
 else
     print "${YELLOW}Laporan TIDAK dikirim (KIRIM_TELEGRAM=false)${NC}"
 fi
@@ -397,4 +468,6 @@ print "Log disimpan di: ${GREEN}$LOGFILE${NC}"
 if [ "$WEB_PANEL_ENABLE" = true ]; then
     print "Web panel berjalan di port: ${GREEN}$WEB_PANEL_PORT${NC}"
     print "Akses dashboard di: ${GREEN}http://$IP:$WEB_PANEL_PORT${NC}"
+    print "Untuk menghentikan web panel: ${RED}pm2 stop server-monitor${NC}"
+    print "Untuk melihat log web panel: ${YELLOW}pm2 logs server-monitor${NC}"
 fi
